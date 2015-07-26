@@ -27,9 +27,14 @@ Elm.Native.ODE.make = function(localRuntime) {
     return eval(x);
   }
 
+  function solutionValues(solution) {
+    return List.fromArray(solution.y.map(List.fromArray));
+  }
+
   return localRuntime.Native.ODE.values = {
     evaluate : evaluate,
     solve : F6(solve),
+    solutionValues : solutionValues,
     at : F2(at)
   }
 }

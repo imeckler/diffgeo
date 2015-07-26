@@ -5,11 +5,18 @@ import ODE
 import Dict
 import Graphics.Collage exposing (..)
 import Debug
+import Color
 
 -- we use the coordinates "x1" and "x2"
 
 -- (a, b, c, d) is [[a, b], [c, d]]
 type alias TwoForm = (Expression, Expression, Expression, Expression)
+
+coord1 : String
+coord1 = "x"
+
+coord2 : String
+coord2 = "y"
 
 christoffelFirst1 (g11, g12, g21, g22) =
   let
@@ -92,7 +99,6 @@ sum (e::es) = List.foldl Add e es
 prod (e::es) = List.foldl Mul e es
 
 -- TODO: Inline to avoid repeated computation
-
 poincare =
   let
     c =
@@ -106,7 +112,8 @@ poincare =
   in
   (c, Constant 0, Constant 0, c)
 
-f g =
+geodesicSystem : TwoForm -> ODE.ODESystem
+geodesicSystem g =
   let
     (gamma111,gamma121,gamma211, gamma221) = christoffelSecond1 g
     (gamma112,gamma122,gamma212, gamma222) = christoffelSecond2 g
@@ -122,12 +129,12 @@ f g =
           , prod [ gamma221, Var "dx2", Var "dx2" ]
           ]
         )
-      , ("dx1"
+      , ("dx2"
         , Mul (Constant -1) <| sum
-          [ prod [ gamma111, Var "dx1", Var "dx1" ]
-          , prod [ gamma121, Var "dx1", Var "dx2" ]
-          , prod [ gamma211, Var "dx2", Var "dx1" ]
-          , prod [ gamma221, Var "dx2", Var "dx2" ]
+          [ prod [ gamma112, Var "dx1", Var "dx1" ]
+          , prod [ gamma122, Var "dx1", Var "dx2" ]
+          , prod [ gamma212, Var "dx2", Var "dx1" ]
+          , prod [ gamma222, Var "dx2", Var "dx2" ]
           ]
         )
       ]
@@ -136,8 +143,19 @@ f g =
   in
   system
 
+soln =
+  let
+    init = Dict.fromList
+      [ ("dx1", 0)
+      , ("dx2", 1)
+      , ("x1", 0.5)
+      , ("x2", 0)
+      ]
+    system = f poincare
+  in
+  ODE.solve 0 100 init system 0.00001 1000
 
-test =
+main =
   let
     init = Dict.fromList
       [ ("dx1", 0)
@@ -148,6 +166,12 @@ test =
     system = f poincare
     () = Debug.log "poop"
     soln = ODE.solve 0 100 init system 0.00001 1000
+
+    toPt env =
+      (200 * ODE.getExn "x1" env, 200 * ODE.getExn "x2" env)
   in
-  soln
+  collage 500 500
+  [ traced (solid Color.blue) (List.map toPt (ODE.solutionValues soln))
+  , traced (solid Color.black) (circle 200 ++ [(200, 0)])
+  ]
 

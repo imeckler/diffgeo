@@ -140,6 +140,11 @@ solve lower upper initial system precision maxIterations =
 at : Solution -> Float -> Environment
 at solution t = Dict.fromList (List.map2 (,) solution.names (Native.ODE.at solution.jsSolution t))
 
+solutionValues : Solution -> List Environment
+solutionValues sol =
+  List.map (Dict.fromList << List.map2 (,) sol.names)
+    (Native.ODE.solutionValues sol.jsSolution)
+
 parseExn : String -> Expression
 parseExn s = case Expression.parse s of Ok e -> e
 

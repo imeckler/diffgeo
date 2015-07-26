@@ -6,8 +6,9 @@ import Native.ODE
 import List
 import String
 import Debug
+import Util exposing (..)
 
-type alias ODESystem =
+type alias System =
   { function       : JSFunction
   , indices        : Dict String Int
   }
@@ -24,12 +25,6 @@ type alias Spec = Dict String Expression
 
 envName : String
 envName = "__odearr"
-
-getExn : comparable -> Dict comparable v -> v
-getExn k d =
-  case Dict.get k d of
-    Just x -> x
-    Nothing -> Debug.crash ("getExn: " ++ toString k ++ " not in " ++ toString d)
 
 parenthesize x = "(" ++ x ++ ")"
 
@@ -105,7 +100,7 @@ makeIndicesOne =
 makeIndices : Spec -> Dict String Int
 makeIndices spec = fst (Dict.foldl (\var expr (acc, i) -> (Dict.insert var i acc, i + 1)) (Dict.empty, 0) spec)
 
-compile : Spec -> ODESystem
+compile : Spec -> System
 compile spec =
   let indices =
         makeIndices spec
@@ -119,7 +114,7 @@ compile spec =
   , indices        = indices
   }
 
-solve : Float -> Float -> Environment -> ODESystem -> Float -> Int -> Solution
+solve : Float -> Float -> Environment -> System -> Float -> Int -> Solution
 solve lower upper initial system precision maxIterations =
   let
     _ = Debug.log "indices" system.indices

@@ -24,6 +24,7 @@ Elm.Native.ODE.make = function(localRuntime) {
   }
 
   function evaluate(x) {
+    console.log(x);
     return eval(x);
   }
 

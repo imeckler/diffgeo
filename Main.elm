@@ -123,7 +123,7 @@ geodesicSystem g =
       [ (coord1, Var dcoord1)
       , (coord2, Var dcoord2)
       , (dcoord1
-        , Mul (Constant -1) <| sum
+        , Expression.optimize <| Mul (Constant -1) <| sum
           [ prod [ gamma111, Var dcoord1, Var dcoord1 ]
           , prod [ gamma121, Var dcoord1, Var dcoord2 ]
           , prod [ gamma211, Var dcoord2, Var dcoord1 ]
@@ -131,7 +131,7 @@ geodesicSystem g =
           ]
         )
       , (dcoord2
-        , Mul (Constant -1) <| sum
+        , Expression.optimize <| Mul (Constant -1) <| sum
           [ prod [ gamma112, Var dcoord1, Var dcoord1 ]
           , prod [ gamma122, Var dcoord1, Var dcoord2 ]
           , prod [ gamma212, Var dcoord2, Var dcoord1 ]
@@ -158,7 +158,6 @@ type alias State =
   , trail        : List (List (Float, Float))
   , speed        : Float
   , turningSpeed : Float
-  , showFuture   : Bool
   }
 
 -- Inputs
@@ -190,7 +189,6 @@ type Update
   | Pan (Float, Float)
   | ClearTrail
   | ToggleLeaveTrail
-  | ToggleShowFuture
   | Zoom Float
   | SetScaleFactor Float
   | SetSpeed Float
@@ -257,30 +255,37 @@ update u s =
 
     SetMetric ig ->
       let
-        (g, init, overlay) =
+        m =
           case ig of
             Right g ->
-              (g, ODE.at s.currGeodesic s.geodesicPos, \_ -> group [])
+              { twoForm = g
+              , init = ODE.at s.currGeodesic s.geodesicPos
+              , name = "Custom"
+              , scaleFactor = defaultScaleFactor
+              , overlay = \_ -> group []
+              , pan = defaultPan
+              }
 
             Left i ->
-              let m = metricArray ! i in
-              (m.twoForm, m.init, m.overlay)
+              metricArray ! i
 
         system =
-          geodesicSystem g
+          geodesicSystem m.twoForm
 
-        currGeodesic = ODE.solve 0 futureLength init system 0.000001 1000
+        currGeodesic = ODE.solve 0 futureLength m.init system 0.000001 1000
       in
       { s
-      | metric <- g
+      | metric <- m.twoForm
       , metricIndex <- ig
-      , overlay <- overlay
+      , overlay <- m.overlay
       , system <- system
       , trailStart <- Maybe.map (\_ -> 0) s.trailStart
       , currGeodesic <- currGeodesic
       , nextGeodesic <- ODE.solve 0 futureLength (ODE.at currGeodesic futureLength) system 0.000001 1000
       , geodesicPos <- 0
       , trail <- []
+      , scaleFactor <- m.scaleFactor
+      , pan <- m.pan
       }
 
 
@@ -293,9 +298,6 @@ update u s =
     Pan (dx, dy) ->
       let (x, y) = s.pan in
       { s | pan <- (x + dx, y + dy) }
-
-    ToggleShowFuture ->
-      { s | showFuture <- not s.showFuture }
 
     ToggleLeaveTrail ->
       case s.trailStart of
@@ -424,7 +426,6 @@ curvedArrow s =
         arrowLen - bodyLenFromCurr
 
       headLenFromCurr =
-        Debug.log "headLenFromCurr" <|
         let
           remainingOnCurr =
             (futureLength - s.geodesicPos) - bodyLenFromCurr
@@ -453,7 +454,7 @@ curvedArrow s =
       headPts =
         let 
           currStart = s.geodesicPos + bodyLenFromCurr
-          dataFromCurr = Debug.log "dataFromCurr" <|
+          dataFromCurr =
             if headLenFromCurr > 0
             then
               List.map (\d -> {d | t <- d.t - currStart})
@@ -461,14 +462,14 @@ curvedArrow s =
             else
               []
 
-          dataFromNext =Debug.log "dataFromNext" <| 
+          dataFromNext =
             if headLenFromNext > 0
             then 
               List.map (\d -> {d | t <- d.t + headLenFromCurr - bodyLenFromNext})
                 (dataFromTil bodyLenFromNext (bodyLenFromNext + headLenFromNext) s.nextGeodesic)
             else []
 
-          datas = Debug.log "datas" <|
+          datas =
             dataFromCurr ++ dataFromNext
             {-
             List.map (\d -> {d | t <- d.t - currStart}) dataFromCurr
@@ -513,15 +514,12 @@ drawSpace s =
   group
   -- Would love to actually approximate circles by probing a fixed distance along geodesics.
   -- Instead I sort of approximate it by trying to keep its area roughly correct
-  [ -- circle (s.scaleFactor / (3 * sqrt (currentDet s))) |> filled Color.black |> move (x, y)
+  -- circle (s.scaleFactor / (3 * sqrt (currentDet s))) |> filled Color.black |> move (x, y)
   {-
   [ move (x,y) 
       (filled Color.black
         (trueCircle s.system s.scaleFactor (xReal, yReal) 0.3)) -}
-    traced (solid Color.blue) (path [(x, y), (x + dx, y + dy)])
-  , if s.showFuture
-    then curvedArrow s -- drawGeodesic s.scaleFactor s.currGeodesic
-    else group []
+  [ curvedArrow s
   , case s.trailStart of
       Just start ->
         drawGeodesicFromTil
@@ -597,36 +595,68 @@ drawGeodesicFromTil scaleFactor start stop geodesic =
   in
   traced (solid Color.green) (path pts)
 
+closedCircle r =
+  circle r ++ [(r, 0)]
+
 metricList =
   [ { name = "Upper half plane"
     , twoForm = halfPlane
     , init = Dict.fromList [(coord1, 0), (coord2, 1), (dcoord1, 1), (dcoord2, 0)]
     , overlay = \scaleFactor ->
         traced (dashed Color.black) (segment (-1000 * scaleFactor, 0) (1000 * scaleFactor, 0))
+    , scaleFactor = defaultScaleFactor
+    , pan = (0, defaultScaleFactor)
     }
   , { name = "Poincare"
     , twoForm = poincare
     , init = Dict.fromList [(coord1, 0.5), (coord2, 0), (dcoord1, 0), (dcoord2, 1)]
     , overlay = \scaleFactor ->
-        traced (dashed Color.black) (circle scaleFactor ++ [(scaleFactor, 0)])
+        traced (dashed Color.black) (closedCircle scaleFactor)
+    , scaleFactor = 2 * defaultScaleFactor
+    , pan = defaultPan
+    }
+  , { name = "Sphere"
+    , twoForm = sphere
+    , init = Dict.fromList [(coord1, pi), (coord2, pi/2), (dcoord1, -0.04), (dcoord2, 1)]
+    , overlay = \scaleFactor ->
+        let x1 = 2 * pi * scaleFactor in let y1 = pi * scaleFactor in
+        traced (dashed Color.black)
+          (path [(0, 0), (x1, 0), (x1, y1), (0, y1), (0, 0)])
+    , scaleFactor = defaultScaleFactor
+    , pan = (-pi*defaultScaleFactor, pi*defaultScaleFactor/2)
+    }
+  , { name = "Cylinder"
+    , twoForm = cylinder
+    , init = Dict.fromList [(coord1, 0.5), (coord2, 0), (dcoord1, 0), (dcoord2, 1)]
+    , scaleFactor = defaultScaleFactor
+    , pan = defaultPan
+    , overlay = \scaleFactor ->
+        let nRays = 8 in
+        group
+        [ group
+          (List.map (\i -> traced (dashed Color.black) (closedCircle (i * scaleFactor)))
+            [1..10])
+        , group
+          (List.map (\i ->
+            let t = i * 2 * pi / nRays in
+            traced (dashed Color.black)
+              (segment (0,0) (10 * scaleFactor * cos t, 10 * scaleFactor * sin t)))
+            [1..nRays])
+        ]
     }
   , { name = "Flat"
     , twoForm = flat
     , init = Dict.fromList [(coord1, 0), (coord2, 1), (dcoord1, 1), (dcoord2, 0)]
     , overlay = \_ -> group []
-    }
-  , { name = "Sphere"
-    , twoForm = sphere
-    , init = Dict.fromList [(coord1, pi), (coord2, pi/2), (dcoord1, 1), (dcoord2, 0)]
-    , overlay = \scaleFactor ->
-        let x1 = 2 * pi * scaleFactor in let y1 = pi * scaleFactor in
-        traced (dashed Color.black)
-          (path [(0, 0), (x1, 0), (x1, y1), (0, y1), (0, 0)])
+    , scaleFactor = defaultScaleFactor
+    , pan = defaultPan
     }
   , { name = "Curvy"
     , twoForm = curvy
     , init = Dict.fromList [(coord1, 0.5), (coord2, 1), (dcoord1, 0), (dcoord2, 1)]
     , overlay = \_ -> group []
+    , scaleFactor = defaultScaleFactor
+    , pan = defaultPan
     }
   ]
 
@@ -694,11 +724,32 @@ curvy =
   in
   (c, Constant 0, Constant 0, c)
 
-mystery =
+cylinder =
   let
-    c = Var coord2
+    x = Var coord1
+    y = Var coord2
+    c = Pow (Add (Mul x x) (Mul y y)) -1
   in
-  (c, Constant 0, Constant 0, c)
+  ( c, Constant 0
+  , Constant 0, c )
+
+{-
+-- p(x,y) = let r = sqrt (x^2 + y^2) in (x / r, y / r, log r)
+-- Correct but slow since the generated expression is huge.
+cylinder =
+  let 
+    x = Var coord1
+    y = Var coord2
+    r = Pow (Add (Mul x x) (Mul y y)) 0.5
+    p = [ Mul x (Pow r -1), Mul y (Pow r -1), LogBase e r ]
+    dot l1 l2 = sum (List.map2 Mul l1 l2)
+  in
+  ( dot (List.map (derivative coord1) p) (List.map (derivative coord1) p)
+  , dot (List.map (derivative coord1) p) (List.map (derivative coord2) p)
+  , dot (List.map (derivative coord2) p) (List.map (derivative coord1) p)
+  , dot (List.map (derivative coord2) p) (List.map (derivative coord2) p)
+  )
+-}
 
 px x = toString x ++ "px"
 
@@ -758,10 +809,6 @@ draw (w, h) s =
 
     toggleTrailCheck =
       mkCheckBox "toggleTrailCheck" "Leave trail" (shouldLeaveTrail s) ToggleLeaveTrail
-
-    toggleShowFutureCheck =
-      mkCheckBox "toggleShowFutureCheck" "Show extended line"
-        s.showFuture ToggleShowFuture
 
     clearTrailButton =
       Html.button
@@ -867,7 +914,6 @@ draw (w, h) s =
         ]
       ]
       [ wrapNonSlider toggleTrailCheck
-      , wrapNonSlider toggleShowFutureCheck
       , wrapNonSlider clearTrailButton
       , wrapSlider (labelSlider "Speed" speedSlider)
       , wrapSlider (labelSlider "Turn speed" turningSpeedSlider)
@@ -891,6 +937,9 @@ draw (w, h) s =
   ]
   |> Html.toElement w h
 
+defaultScaleFactor = 200
+defaultPan = (0, 0)
+
 main =
   let
     system =
@@ -909,13 +958,12 @@ main =
       , metricIndex = Left 0
       , currGeodesic = currGeodesic
       , nextGeodesic = ODE.solve 0 futureLength (ODE.at currGeodesic futureLength) system 0.000001 1000
-      , scaleFactor = 200
-      , pan = (0, 0)
+      , scaleFactor = metric0.scaleFactor
+      , pan = metric0.pan
       , trailStart = Just 0
       , trail = []
       , speed = 2 / 2000
       , turningSpeed = 30 * pi / Time.second
-      , showFuture = True
       }
 
     state =

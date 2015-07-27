@@ -5,6 +5,7 @@ module Expression
   , evaluateExn
   , parse
   , derivative
+  , optimize
   ) where
 
 {-| A type for simple mathematical expressions.
@@ -151,6 +152,91 @@ derivative x expr =
     Cos e1 ->
       Mul (Constant (-1))
         (Mul (derivative x e1) (Sin e1))
+
+-- TODO: Do a proper optimization at some point with putting things into a normal
+-- form.
+optimize : Expression -> Expression
+optimize expr =
+  case expr of
+    Var _ ->
+      expr
+
+    Constant _ ->
+      expr
+
+    Mul e1 e2 ->
+      case (optimize e1, optimize e2) of
+        (Constant 0, _) ->
+          Constant 0
+
+        (_, Constant 0) ->
+          Constant 0
+
+        (Constant x, Constant y) ->
+          Constant (x * y)
+
+        (Constant 1, e2') ->
+          e2'
+
+        (e1', Constant 1) ->
+          e1'
+
+        (e1', e2') ->
+          Mul e1' e2'
+
+    Add e1 e2 ->
+      case (optimize e1, optimize e2) of
+        (Constant 0, e2') ->
+          e2'
+
+        (e1', Constant 0) ->
+          e1'
+
+        (Constant x, Constant y) ->
+          Constant (x + y)
+
+        (e1', e2') ->
+          Add e1' e2'
+
+    LogBase b e1 ->
+      case optimize e1 of
+        Constant x ->
+          Constant (logBase b x)
+        e1' ->
+          LogBase b e1'
+
+    Exp b e1 ->
+      case optimize e1 of
+        Constant x ->
+          Constant (b ^ x)
+
+        e1' ->
+          Exp b e1'
+
+    Pow e1 p ->
+      case optimize e1 of
+        Constant x ->
+          Constant (x ^ p)
+
+        e1' ->
+          Pow e1' p
+
+    Sin e1 ->
+      case optimize e1 of
+        Constant x ->
+          Constant (sin x)
+
+        e1' ->
+          Sin e1'
+
+    Cos e1 ->
+      case optimize e1 of
+        Constant x ->
+          Constant (cos x)
+
+        e1' ->
+          Cos e1'
+
 {-
 envName : String
 envName = "__elmexpressionenvironment"

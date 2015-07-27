@@ -655,8 +655,8 @@ metricList =
     , scaleFactor = defaultScaleFactor
     , pan = (-pi*defaultScaleFactor, pi*defaultScaleFactor/2)
     }
-  , { name = "Orthographic sphere"
-    , twoForm = orthographicSphere
+  , { name = "Stereographic sphere"
+    , twoForm = stereoGraphicSphere
     , init = Dict.fromList [(coord1, 1.1085813794088752), (coord2, 0.43416503851501376), (dcoord1, 1.0618525452786418), (dcoord2, 0.3927089533282449)]
     , overlay = cylinderOverlay
     , scaleFactor = 66.27618564857013
@@ -703,7 +703,7 @@ sphere =
   , Constant 1
   )
 
-orthographicSphere =
+stereoGraphicSphere =
   let
     x = Var coord1
     y = Var coord2

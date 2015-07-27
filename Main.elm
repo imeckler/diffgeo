@@ -923,7 +923,7 @@ draw (w, h) s =
         [ style [("padding", px 10)] ]
         [ Html.p [] [Html.text "Use the up arrow key to go forward and the left and right arrow keys to turn."]
         , Html.p [] [Html.text "Scroll to zoom, click and drag to pan."]
-        , Html.p [] [Html.text "Try out all the different geometries."]
+        , Html.p [] [Html.text "Try out all the different geometries. Roughly speaking, a geometry is a notion of distance. Though they look curved, the paths you travel along are actually straight lines in each geometry (in the sense that they are the shortest paths between points)."]
         ]
       ]
 

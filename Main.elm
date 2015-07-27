@@ -535,7 +535,7 @@ drawSpace s =
   [ move (x,y) 
       (filled Color.black
         (trueCircle s.system s.scaleFactor (xReal, yReal) 0.3)) -}
-  [ curvedArrow s
+  [ s.overlay s.scaleFactor
   , case s.trailStart of
       Just start ->
         drawGeodesicFromTil
@@ -546,7 +546,7 @@ drawSpace s =
     (List.map
       (traced (solid Color.green) << path << List.map (\(x,y) -> (x*s.scaleFactor, y*s.scaleFactor)))
       s.trail)
-  , s.overlay s.scaleFactor
+  , curvedArrow s
   ]
   |> move (px, -py)
 

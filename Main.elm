@@ -1026,7 +1026,7 @@ main =
     system =
       geodesicSystem metric0.twoForm
 
-    metric0 = metricArray ! 0
+    metric0 = metricArray ! 1
 
     init = metric0.init
 

@@ -37,3 +37,13 @@ dropWhile f xs =
     x :: xs' ->
       if f x then dropWhile f xs' else xs
 
+revMap : (a -> b) -> List a -> List b
+revMap f =
+  let
+    go acc xs =
+      case xs of
+        [] -> acc
+        x :: xs' -> go (f x :: acc) xs'
+  in
+  go []
+

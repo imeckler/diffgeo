@@ -268,6 +268,8 @@ update u s =
 
         system =
           geodesicSystem g
+
+        currGeodesic = ODE.solve 0 futureLength init system 0.000001 1000
       in
       { s
       | metric <- g
@@ -275,7 +277,8 @@ update u s =
       , overlay <- overlay
       , system <- system
       , trailStart <- Maybe.map (\_ -> 0) s.trailStart
-      , currGeodesic <- ODE.solve 0 futureLength init system 0.000001 1000
+      , currGeodesic <- currGeodesic
+      , nextGeodesic <- ODE.solve 0 futureLength (ODE.at currGeodesic futureLength) system 0.000001 1000
       , geodesicPos <- 0
       , trail <- []
       }
@@ -355,7 +358,7 @@ updateKeys kd s =
       { s
       | geodesicPos <- geodesicPos' - futureLength
       , currGeodesic <- s.nextGeodesic
-      , nextGeodesic <-
+      , nextGeodesic <- ODE.solve 0 futureLength (ODE.at s.nextGeodesic futureLength) s.system 0.000001 1000
 --      , currGeodesic <- ODE.solve 0 futureLength (ODE.at s.currGeodesic s.geodesicPos) s.system 0.000001 1000
       , trail <- trail'
       , trailStart <- Maybe.map (\_ -> 0) s.trailStart
@@ -391,18 +394,115 @@ updateKeys kd s =
             if geodesicPos' > 0
             then geodesicPathFromTill start geodesicPos' s.currGeodesic :: s.trail
             else s.trail
+
+      currGeodesic' =
+        ODE.solve 0 futureLength posAndVel' s.system 0.000001 1000
     in
     { s
     | geodesicPos <- 0
-    -- If need be, can solve in a smaller interval and refresh when
-    -- geodesicPos is too big
-    , currGeodesic <- ODE.solve 0 futureLength posAndVel' s.system 0.000001 1000
+    , currGeodesic <- currGeodesic'
+    , nextGeodesic <- ODE.solve 0 futureLength (ODE.at currGeodesic' futureLength) s.system 0.000001 1000
     , trail <- trail'
     , trailStart <- Maybe.map (\_ -> 0) s.trailStart
     }
 
+-- (x, y) -> (-y, x)
+
 curvedArrow : State -> Form
-curvedArrow
+curvedArrow s =
+  let arrowLen = 0.5
+      headLen = 0.3
+
+      bodyLenFromCurr =
+        let
+          remainingOnCurr =
+            futureLength - s.geodesicPos
+        in
+        min remainingOnCurr arrowLen
+
+      bodyLenFromNext =
+        arrowLen - bodyLenFromCurr
+
+      headLenFromCurr =
+        Debug.log "headLenFromCurr" <|
+        let
+          remainingOnCurr =
+            (futureLength - s.geodesicPos) - bodyLenFromCurr
+        in
+        min headLen remainingOnCurr
+
+      headLenFromNext =
+        headLen - headLenFromCurr
+
+      dataFromTil start stop geo =
+        let
+          toRecord t dat =
+            { t = t, x = getExn coord1 dat, y = getExn coord2 dat, dx = getExn dcoord1 dat, dy = getExn dcoord2 dat }
+        in
+        toRecord start (ODE.at geo start)
+        ::
+          (takeWhile (\d -> d.t <= stop)
+            (dropWhile (\d -> d.t < start)
+              (List.map2 toRecord (ODE.solutionParameters geo) (ODE.solutionValues geo))))
+        ++ [ toRecord stop (ODE.at geo stop) ]
+
+      bodyDatas =
+        dataFromTil s.geodesicPos (s.geodesicPos + bodyLenFromCurr) s.currGeodesic
+        ++ if bodyLenFromNext > 0 then dataFromTil 0 bodyLenFromNext s.nextGeodesic else []
+
+      headPts =
+        let 
+          currStart = s.geodesicPos + bodyLenFromCurr
+          dataFromCurr = Debug.log "dataFromCurr" <|
+            if headLenFromCurr > 0
+            then
+              List.map (\d -> {d | t <- d.t - currStart})
+                (dataFromTil currStart (currStart + headLenFromCurr) s.currGeodesic)
+            else
+              []
+
+          dataFromNext =Debug.log "dataFromNext" <| 
+            if headLenFromNext > 0
+            then 
+              if bodyLenFromNext > 0
+              then
+                List.map (\d -> {d | t <- d.t - bodyLenFromNext})
+                  (dataFromTil bodyLenFromNext (bodyLenFromNext + headLenFromNext) s.nextGeodesic)
+              else
+                List.map (\d -> {d | t <- d.t + headLenFromCurr})
+                  (dataFromTil 0 headLenFromNext s.nextGeodesic)
+            else []
+
+          datas = Debug.log "datas" <|
+            dataFromCurr ++ dataFromNext
+            {-
+            List.map (\d -> {d | t <- d.t - currStart}) dataFromCurr
+            ++ List.map (\d -> {d | t <- d.t + headLenFromCurr}) dataFromNext -}
+
+          offset dist sgn d =
+            let {x,y,dx,dy,t} = d
+                t' = 1 - t/headLen
+            in
+            ( s.scaleFactor * (x + t' * dist * sgn * -dy)
+            , s.scaleFactor * (y + t' * dist * sgn * dx)
+            )
+        in
+        List.map (offset 0.2 1) datas
+        ++ revMap (offset 0.2 -1) datas
+      
+      offset d sgn dat =
+        let {x,y,dx,dy} = dat
+        in
+        ( s.scaleFactor * (x + d * sgn * -dy)
+        , s.scaleFactor * (y + d * sgn * dx)
+        )
+
+      pts =
+        List.map (offset 0.1 1) bodyDatas
+        ++ headPts
+        ++ revMap (offset 0.1 -1) bodyDatas
+  in
+  filled Color.red (polygon pts)
 
 drawSpace : State -> Form
 drawSpace s =
@@ -418,14 +518,14 @@ drawSpace s =
   group
   -- Would love to actually approximate circles by probing a fixed distance along geodesics.
   -- Instead I sort of approximate it by trying to keep its area roughly correct
-  [ circle (s.scaleFactor / (3 * sqrt (currentDet s))) |> filled Color.black |> move (x, y)
+  [ -- circle (s.scaleFactor / (3 * sqrt (currentDet s))) |> filled Color.black |> move (x, y)
   {-
   [ move (x,y) 
       (filled Color.black
         (trueCircle s.system s.scaleFactor (xReal, yReal) 0.3)) -}
-  , traced (solid Color.blue) (path [(x, y), (x + dx, y + dy)])
+    traced (solid Color.blue) (path [(x, y), (x + dx, y + dy)])
   , if s.showFuture
-    then drawGeodesic s.scaleFactor s.currGeodesic
+    then curvedArrow s -- drawGeodesic s.scaleFactor s.currGeodesic
     else group []
   , case s.trailStart of
       Just start ->
@@ -477,7 +577,7 @@ geodesicPathFromTill start stop geodesic =
   ::
   List.map snd
     (takeWhile (\(t, _) -> t <= stop)
-      (dropWhile (\(t, _) -> t <= start)
+      (dropWhile (\(t, _) -> t < start)
         (List.map2 (\t e ->
           (t, toPt e))
           (ODE.solutionParameters geodesic)
@@ -493,7 +593,7 @@ drawGeodesicFromTil scaleFactor start stop geodesic =
       ::
       List.map snd
         (takeWhile (\(t, _) -> t <= stop)
-          (dropWhile (\(t, _) -> t <= start)
+          (dropWhile (\(t, _) -> t < start)
             (List.map2 (\t e ->
               (t, toPt e))
               (ODE.solutionParameters geodesic)
@@ -805,13 +905,15 @@ main =
 
     init = metric0.init
 
+    currGeodesic = ODE.solve 0 futureLength init system 0.000001 1000
     s0 =
       { geodesicPos = 0
       , system = system
       , metric = metric0.twoForm
       , overlay = metric0.overlay
       , metricIndex = Left 0
-      , currGeodesic = ODE.solve 0 futureLength init system 0.000001 1000
+      , currGeodesic = currGeodesic
+      , nextGeodesic = ODE.solve 0 futureLength (ODE.at currGeodesic futureLength) system 0.000001 1000
       , scaleFactor = 200
       , pan = (0, 0)
       , trailStart = Just 0

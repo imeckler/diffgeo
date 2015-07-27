@@ -117,14 +117,12 @@ compile spec =
 solve : Float -> Float -> Environment -> System -> Float -> Int -> Solution
 solve lower upper initial system precision maxIterations =
   let
-    _ = Debug.log "indices" system.indices
 
     (initialList, names) =
       let inits =
             Dict.toList initial
             |> List.map (\(x, val) -> {index=getExn x system.indices, value=val, name=x})
             |> List.sortBy .index
-          _ = Debug.log "yoyo" ()
       in
       (List.map .value inits, List.map .name inits)
   in

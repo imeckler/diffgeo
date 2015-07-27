@@ -3,6 +3,7 @@ module Main where
 import Expression exposing (Expression(..), derivative)
 import ODE
 import Dict
+import Array
 import Graphics.Collage exposing (..)
 import Graphics.Element exposing (Element)
 import Json.Decode exposing ((:=))
@@ -15,6 +16,7 @@ import Keyboard
 import Util exposing (..)
 import Time
 import Window
+import Either exposing (Either(..))
 import Html exposing (div)
 import Html.Events exposing (onMouseDown, onClick, on)
 import Html.Attributes exposing (style, type', attribute, href, rel, src, class)
@@ -110,19 +112,6 @@ parseExn s = case Expression.parse s of Ok e -> e
 sum (e::es) = List.foldl Add e es
 prod (e::es) = List.foldl Mul e es
 
--- TODO: Inline to avoid repeated computation
-poincare =
-  let
-    c =
-      Pow
-        (sum
-        [ Constant 1
-        , Mul (Constant -1)
-            (Add (Mul (Var coord1) (Var coord1)) (Mul (Var coord2) (Var coord2)))
-        ])
-        -2
-  in
-  (c, Constant 0, Constant 0, c)
 
 geodesicSystem : TwoForm -> ODE.System
 geodesicSystem g =
@@ -156,6 +145,7 @@ geodesicSystem g =
 type alias State =
   { system       : ODE.System
   , metric       : TwoForm -- Can precompile if this is slow
+  , metricIndex  : Either Int TwoForm
   , currGeodesic : ODE.Solution
   , geodesicPos  : Float
   , scaleFactor  : Float
@@ -166,9 +156,7 @@ type alias State =
   , trail        : List (List (Float, Float))
   , speed        : Float
   , turningSpeed : Float
-  {-
-  , pos          : (Float, Float)
-  , dir          : (Float, Float) -}
+  , showFuture   : Bool
   }
 
 -- Inputs
@@ -205,6 +193,7 @@ type Update
   | SetScaleFactor Float
   | SetSpeed Float
   | SetTurningSpeed Float
+  | SetMetric (Either Int TwoForm)
   | NoOp
 
 updateBox : Signal.Mailbox Update
@@ -264,6 +253,30 @@ update u s =
     NoOp ->
       s
 
+    SetMetric ig ->
+      let
+        (g, init) =
+          case ig of
+            Right g ->
+              (g, ODE.at s.currGeodesic s.geodesicPos)
+
+            Left i ->
+              let m = metricArray ! i in
+              (m.twoForm, m.init)
+
+        system =
+          geodesicSystem g
+      in
+      { s
+      | metric <- g
+      , system <- system
+      , trailStart <- Maybe.map (\_ -> 0) s.trailStart
+      , currGeodesic <- ODE.solve 0 futureLength init system 0.000001 1000
+      , geodesicPos <- 0
+      , trail <- []
+      }
+
+
     Zoom z ->
       { s | scaleFactor <- s.scaleFactor * (1.01 ^ z) }
 
@@ -273,6 +286,9 @@ update u s =
     Pan (dx, dy) ->
       let (x, y) = s.pan in
       { s | pan <- (x + dx, y + dy) }
+
+    ToggleShowFuture ->
+      { s | showFuture <- not s.showFuture }
 
     ToggleLeaveTrail ->
       case s.trailStart of
@@ -316,7 +332,7 @@ updateKeys kd s =
   let dt           = kd.delta
       keys         = kd.keys
       rate         = 1 / 2000
-      geodesicPos' = s.geodesicPos + s.speed * dt * toFloat keys.y
+      geodesicPos' = s.geodesicPos + s.speed * dt * toFloat (max keys.y 0)
   in
   if keys.x == 0
   then
@@ -348,7 +364,7 @@ updateKeys kd s =
         (getExn dcoord1 posAndVel, getExn dcoord2 posAndVel)
 
       angle' = 
-        Debug.log "angle" (atan2 velY velX) + s.turningSpeed * (-1 * toFloat keys.x)
+        atan2 velY velX + s.turningSpeed * (-1 * toFloat keys.x)
 
       -- possibly have to normalize this vector wrt to the metric to get
       -- a unit speed geodesic
@@ -399,6 +415,9 @@ drawSpace s =
       (filled Color.black
         (trueCircle s.system s.scaleFactor (xReal, yReal) 0.3)) -}
   , traced (solid Color.blue) (path [(x, y), (x + dx, y + dy)])
+  , if s.showFuture
+    then drawGeodesic s.scaleFactor s.currGeodesic
+    else group []
   , case s.trailStart of
       Just start ->
         drawGeodesicFromTil
@@ -424,11 +443,10 @@ drawGeodesic scaleFactor sol =
 drawGeodesicTil : Float -> Float -> ODE.Solution -> Form
 drawGeodesicTil scaleFactor distance geodesic =
   let
-    _ = Debug.log "distance" distance
     toPt e = (scaleFactor * getExn coord1 e, scaleFactor * getExn coord2 e)
     pts =
       List.map snd
-        (takeWhile (\(t, pt) -> t <= distance) <| Debug.log "allpts"
+        (takeWhile (\(t, pt) -> t <= distance)
           (List.map2 (\t e ->
             (t, toPt e))
             (ODE.solutionParameters geodesic)
@@ -473,6 +491,58 @@ drawGeodesicFromTil scaleFactor start stop geodesic =
         ++ [ toPt (ODE.at geodesic stop) ]
   in
   traced (solid Color.green) (path pts)
+
+metricList =
+  [ { name = "Upper half plane"
+    , twoForm = halfPlane
+    , init = Dict.fromList [(coord1, 0), (coord2, 1), (dcoord1, 1), (dcoord2, 0)]
+    }
+  , { name = "Poincare"
+    , twoForm = poincare
+    , init = Dict.fromList [(coord1, 0.5), (coord2, 0), (dcoord1, 0), (dcoord2, 1)]
+    }
+  , { name = "Flat"
+    , twoForm = flat
+    , init = Dict.fromList [(coord1, 0), (coord2, 1), (dcoord1, 1), (dcoord2, 0)]
+    }
+  , { name = "Curvy"
+    , twoForm = curvy
+    , init = Dict.fromList [(coord1, 0.5), (coord2, 1), (dcoord1, 0), (dcoord2, 1)]
+    }
+  ]
+
+metricArray = Array.fromList metricList
+
+flat = (Constant 1, Constant 0, Constant 0 , Constant 1)
+
+poincare =
+  let
+    c =
+      Pow
+        (sum
+        [ Constant 1
+        , Mul (Constant -1)
+            (Add (Mul (Var coord1) (Var coord1)) (Mul (Var coord2) (Var coord2)))
+        ])
+        -2
+  in
+  (c, Constant 0, Constant 0, c)
+
+klein =
+  let
+    (x, y) = (Var coord1, Var coord2)
+    c =
+      sum
+      [ Constant 1
+      , Mul (Constant -1) 
+        (Add (Mul x x) (Mul y y))
+      ]
+  in
+  ( Add (Pow c -1) (Mul (Mul x x) (Pow c -2))
+  , Mul (Mul x y) (Pow c -2)
+  , Mul (Mul x y) (Pow c -2)
+  , Pow c -1
+  )
 
 halfPlane =
   let c = Pow (Var coord2) -2 in
@@ -613,13 +683,57 @@ draw (w, h) s =
       ]
       [item]
 
+    metricCard =
+      div
+      [ class "mdl-card mdl-shadow--2dp demo-card-square" 
+      , style [("width", "100%")]
+      ]
+      [ div
+        [ class "mdl-card__title" 
+        , style
+          [ ("backgroundColor", "rgb(63, 81, 181)") 
+          , ("color", "white")
+          ]
+        ]
+        [ Html.h2 [ class "mdl-card__title-text" ]
+          [ Html.text "Choose metric" ]
+        ]
+      , div
+        [ style [("paddingTop", px 15)] ]
+        [ Html.ul
+          [ style
+            [ ("listStyleType", "none") ]
+          ]
+          (List.indexedMap (\i m ->
+            Html.li []
+            [ Html.label
+              [ onClick updateBox.address (SetMetric (Left i))
+              , class "mdl-radio mdl-js-radio mdl-js-ripple-effect"
+              , Html.Attributes.for ("metric" ++ toString i)
+              ]
+              [ Html.input
+                ((if Left i == s.metricIndex then [attribute "checked" ""] else []) ++
+                [ type' "radio"
+                , Html.Attributes.id ("metric" ++ toString i)
+                , class "mdl-radio__button"
+                , Html.Attributes.name "metric"
+                ]) 
+                []
+              , Html.span [ class "mdl-radio__label" ]
+                [ Html.text m.name ]
+              ]
+            ])
+            metricList)
+        ]
+      ]
+
     sideBar =
       Html.ul
       [ style
         [ ("width", px sideBarWidth) 
         , ("position", "absolute")
         , ("top", "0")
-        , ("right", "0")
+        , ("right", "50px")
         , ("zIndex", "10")
         , ("listStyleType", "none")
         , ("padding", "0")
@@ -627,9 +741,11 @@ draw (w, h) s =
         ]
       ]
       [ wrapNonSlider toggleTrailCheck
+      , wrapNonSlider toggleShowFutureCheck
       , wrapNonSlider clearTrailButton
       , wrapSlider (labelSlider "Speed" speedSlider)
       , wrapSlider (labelSlider "Turn speed" turningSpeedSlider)
+      , Html.li [] [metricCard]
       ]
   in
   div [ style [("width", "100%")] ]
@@ -652,19 +768,17 @@ draw (w, h) s =
 main =
   let
     system =
-      geodesicSystem poincare
+      geodesicSystem metric0.twoForm
 
-    init = Dict.fromList
-      [ (coord1, 0.5)
-      , (coord2, 0.5)
-      , (dcoord1, 0)
-      , (dcoord2, 1)
-      ]
+    metric0 = metricArray ! 0
+
+    init = metric0.init
 
     s0 =
       { geodesicPos = 0
       , system = system
-      , metric = poincare
+      , metric = metric0.twoForm
+      , metricIndex = Left 0
       , currGeodesic = ODE.solve 0 futureLength init system 0.000001 1000
       , scaleFactor = 200
       , pan = (0, 0)
@@ -672,9 +786,11 @@ main =
       , trail = []
       , speed = 2 / 2000
       , turningSpeed = 30 * pi / Time.second
+      , showFuture = True
       }
 
-    state = Signal.foldp update s0 updates
+    state =
+      Signal.foldp update s0 updates
   in
   Signal.map2 (\(w,h) s ->
     let x = Debug.watch "pos" (ODE.at s.currGeodesic s.geodesicPos) in
@@ -682,24 +798,4 @@ main =
     draw (w,h) s)
     Window.dimensions
     state
-  {-
-  let
-    init = Dict.fromList
-      [ (dcoord1, 0)
-      , (dcoord2, 1)
-      , (coord1, 0.5)
-      , (coord2, 0)
-      ]
-    system = geodesicSystem poincare
-    () = Debug.log "poop"
-    soln = ODE.solve 0 100 init system 0.00001 1000
-
-    toPt env =
-      (200 * getExn coord1 env, 200 * getExn coord2 env)
-  in
-  collage 500 500
-  [ traced (solid Color.blue) (List.map toPt (ODE.solutionValues soln))
-  , traced (solid Color.black) (circle 200 ++ [(200, 0)])
-  ]
-  -}
 

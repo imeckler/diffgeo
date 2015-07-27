@@ -464,13 +464,8 @@ curvedArrow s =
           dataFromNext =Debug.log "dataFromNext" <| 
             if headLenFromNext > 0
             then 
-              if bodyLenFromNext > 0
-              then
-                List.map (\d -> {d | t <- d.t - bodyLenFromNext})
-                  (dataFromTil bodyLenFromNext (bodyLenFromNext + headLenFromNext) s.nextGeodesic)
-              else
-                List.map (\d -> {d | t <- d.t + headLenFromCurr})
-                  (dataFromTil 0 headLenFromNext s.nextGeodesic)
+              List.map (\d -> {d | t <- d.t + headLenFromCurr - bodyLenFromNext})
+                (dataFromTil bodyLenFromNext (bodyLenFromNext + headLenFromNext) s.nextGeodesic)
             else []
 
           datas = Debug.log "datas" <|

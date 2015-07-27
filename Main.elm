@@ -923,7 +923,7 @@ draw (w, h) s =
         [ style [("padding", px 10)] ]
         [ Html.p [] [Html.text "Use the up arrow key to go forward and the left and right arrow keys to turn."]
         , Html.p [] [Html.text "Scroll to zoom, click and drag to pan."]
-        , Html.p [] [Html.text "Try out all the different metrics."]
+        , Html.p [] [Html.text "Try out all the different geometries."]
         ]
       ]
 
@@ -940,7 +940,7 @@ draw (w, h) s =
           ]
         ]
         [ Html.h2 [ class "mdl-card__title-text" ]
-          [ Html.text "Choose metric" ]
+          [ Html.text "Choose geometry" ]
         ]
       , div
         [ style [("paddingTop", px 15)] ]

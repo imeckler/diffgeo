@@ -145,6 +145,7 @@ geodesicSystem g =
 type alias State =
   { system       : ODE.System
   , metric       : TwoForm -- Can precompile if this is slow
+  , overlay      : Float -> Form
   , metricIndex  : Either Int TwoForm
   , currGeodesic : ODE.Solution
   , geodesicPos  : Float
@@ -255,20 +256,22 @@ update u s =
 
     SetMetric ig ->
       let
-        (g, init) =
+        (g, init, overlay) =
           case ig of
             Right g ->
-              (g, ODE.at s.currGeodesic s.geodesicPos)
+              (g, ODE.at s.currGeodesic s.geodesicPos, \_ -> group [])
 
             Left i ->
               let m = metricArray ! i in
-              (m.twoForm, m.init)
+              (m.twoForm, m.init, m.overlay)
 
         system =
           geodesicSystem g
       in
       { s
       | metric <- g
+      , metricIndex <- ig
+      , overlay <- overlay
       , system <- system
       , trailStart <- Maybe.map (\_ -> 0) s.trailStart
       , currGeodesic <- ODE.solve 0 futureLength init system 0.000001 1000
@@ -428,6 +431,7 @@ drawSpace s =
     (List.map
       (traced (solid Color.green) << path << List.map (\(x,y) -> (x*s.scaleFactor, y*s.scaleFactor)))
       s.trail)
+  , s.overlay s.scaleFactor
   ]
   |> move (px, -py)
 
@@ -496,18 +500,24 @@ metricList =
   [ { name = "Upper half plane"
     , twoForm = halfPlane
     , init = Dict.fromList [(coord1, 0), (coord2, 1), (dcoord1, 1), (dcoord2, 0)]
+    , overlay = \scaleFactor ->
+        traced (dashed Color.black) (segment (-1000 * scaleFactor, 0) (1000 * scaleFactor, 0))
     }
   , { name = "Poincare"
     , twoForm = poincare
     , init = Dict.fromList [(coord1, 0.5), (coord2, 0), (dcoord1, 0), (dcoord2, 1)]
+    , overlay = \scaleFactor ->
+        traced (dashed Color.black) (circle scaleFactor ++ [(scaleFactor, 0)])
     }
   , { name = "Flat"
     , twoForm = flat
     , init = Dict.fromList [(coord1, 0), (coord2, 1), (dcoord1, 1), (dcoord2, 0)]
+    , overlay = \_ -> group []
     }
   , { name = "Curvy"
     , twoForm = curvy
     , init = Dict.fromList [(coord1, 0.5), (coord2, 1), (dcoord1, 0), (dcoord2, 1)]
+    , overlay = \_ -> group []
     }
   ]
 
@@ -778,6 +788,7 @@ main =
       { geodesicPos = 0
       , system = system
       , metric = metric0.twoForm
+      , overlay = metric0.overlay
       , metricIndex = Left 0
       , currGeodesic = ODE.solve 0 futureLength init system 0.000001 1000
       , scaleFactor = 200

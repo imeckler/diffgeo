@@ -306,7 +306,7 @@ update u s =
 
 
     Zoom z ->
-      { s | scaleFactor <- s.scaleFactor * (1.01 ^ z) }
+      { s | scaleFactor <- s.scaleFactor * (1.01 ^ (-z)) }
 
     Keys kd ->
       updateKeys kd s

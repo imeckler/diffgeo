@@ -148,6 +148,7 @@ type alias State =
   , overlay      : Float -> Form
   , metricIndex  : Either Int TwoForm
   , currGeodesic : ODE.Solution
+  , nextGeodesic : ODE.Solution
   , geodesicPos  : Float
   , scaleFactor  : Float
   , pan          : (Float, Float)
@@ -352,8 +353,10 @@ updateKeys kd s =
             :: s.trail
       in
       { s
-      | geodesicPos <- 0
-      , currGeodesic <- ODE.solve 0 futureLength (ODE.at s.currGeodesic s.geodesicPos) s.system 0.000001 1000
+      | geodesicPos <- geodesicPos' - futureLength
+      , currGeodesic <- s.nextGeodesic
+      , nextGeodesic <-
+--      , currGeodesic <- ODE.solve 0 futureLength (ODE.at s.currGeodesic s.geodesicPos) s.system 0.000001 1000
       , trail <- trail'
       , trailStart <- Maybe.map (\_ -> 0) s.trailStart
       }
@@ -397,6 +400,9 @@ updateKeys kd s =
     , trail <- trail'
     , trailStart <- Maybe.map (\_ -> 0) s.trailStart
     }
+
+curvedArrow : State -> Form
+curvedArrow
 
 drawSpace : State -> Form
 drawSpace s =
@@ -514,6 +520,14 @@ metricList =
     , init = Dict.fromList [(coord1, 0), (coord2, 1), (dcoord1, 1), (dcoord2, 0)]
     , overlay = \_ -> group []
     }
+  , { name = "Sphere"
+    , twoForm = sphere
+    , init = Dict.fromList [(coord1, pi), (coord2, pi/2), (dcoord1, 1), (dcoord2, 0)]
+    , overlay = \scaleFactor ->
+        let x1 = 2 * pi * scaleFactor in let y1 = pi * scaleFactor in
+        traced (dashed Color.black)
+          (path [(0, 0), (x1, 0), (x1, y1), (0, y1), (0, 0)])
+    }
   , { name = "Curvy"
     , twoForm = curvy
     , init = Dict.fromList [(coord1, 0.5), (coord2, 1), (dcoord1, 0), (dcoord2, 1)]
@@ -522,6 +536,13 @@ metricList =
   ]
 
 metricArray = Array.fromList metricList
+
+sphere =
+  ( Pow (Sin (Var coord2)) 2
+  , Constant 0
+  , Constant 0
+  , Constant 1
+  )
 
 flat = (Constant 1, Constant 0, Constant 0 , Constant 1)
 

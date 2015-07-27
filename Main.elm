@@ -637,7 +637,7 @@ metricList =
     , scaleFactor = defaultScaleFactor
     , pan = (0, defaultScaleFactor)
     }
-  , { name = "Poincare"
+  , { name = "Poincare disk"
     , twoForm = poincare
     , init = Dict.fromList [(coord1, 0.5), (coord2, 0), (dcoord1, 0), (dcoord2, 1)]
     , overlay = \scaleFactor ->

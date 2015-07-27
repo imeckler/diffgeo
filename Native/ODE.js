@@ -31,10 +31,23 @@ Elm.Native.ODE.make = function(localRuntime) {
     return List.fromArray(solution.y.map(List.fromArray));
   }
 
+  function solutionParameters(solution) {
+    return List.fromArray(solution.x);
+  }
+
+  /*
+  function solutionValuesUpto(t, solution) {
+    var res = [];
+    var t 
+    for (var i = 0; i < 
+  }
+  */
+
   return localRuntime.Native.ODE.values = {
     evaluate : evaluate,
     solve : F6(solve),
     solutionValues : solutionValues,
+    solutionParameters : solutionParameters,
     at : F2(at)
   }
 }

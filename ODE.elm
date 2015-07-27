@@ -140,6 +140,10 @@ solutionValues sol =
   List.map (Dict.fromList << List.map2 (,) sol.names)
     (Native.ODE.solutionValues sol.jsSolution)
 
+solutionParameters : Solution -> List Float
+solutionParameters sol =
+  Native.ODE.solutionParameters sol.jsSolution
+
 parseExn : String -> Expression
 parseExn s = case Expression.parse s of Ok e -> e
 

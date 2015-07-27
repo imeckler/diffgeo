@@ -4,12 +4,20 @@ import Expression exposing (Expression(..), derivative)
 import ODE
 import Dict
 import Graphics.Collage exposing (..)
+import Graphics.Element exposing (Element)
 import Debug
 import Color
 import Signal
+import Signal.Extra as Signal
+import Mouse
 import Keyboard
 import Util exposing (..)
 import Time
+import Window
+import Html exposing (div)
+import Html.Events exposing (onMouseDown, onClick)
+import Html.Attributes exposing (style)
+import Slider exposing (slider)
 
 -- we use the coordinates coord1 and coord2
 
@@ -149,19 +157,87 @@ type alias State =
   , metric       : TwoForm -- Can precompile if this is slow
   , currGeodesic : ODE.Solution
   , geodesicPos  : Float
+  , scaleFactor  : Float
+  , pan          : (Float, Float)
+  -- If we should leave a trail, this is Just t where t is where along
+  -- the current geodesic we should start the trail. Otherwise it is Nothing
+  , trailStart   : Maybe Float
+  , trail        : List (List (Float, Float))
+  , speed        : Float
+  , turningSpeed : Float
   {-
   , pos          : (Float, Float)
   , dir          : (Float, Float) -}
   }
 
-type alias Keys = { x : Int, y : Int }
+-- Inputs
+mouseDownsInSpaceDivBox : Signal.Mailbox ()
+mouseDownsInSpaceDivBox = Signal.mailbox ()
 
-input : Signal (Float, Keys)
-input =
+toggleLeaveTrailBox : Signal.Mailbox ()
+toggleLeaveTrailBox = Signal.mailbox ()
+
+pans : Signal (Float, Float)
+pans =
+  let 
+    mouseUps =
+      Signal.filterMap (\d -> if d then Nothing else Just False) False Mouse.isDown
+
+    dragging =
+      Signal.merge mouseUps
+        (Signal.map (\_ -> True) mouseDownsInSpaceDivBox.signal)
+  in
+  Signal.foldps (\(xi, yi) (prevX, prevY) ->
+    let (x, y) = (toFloat xi, toFloat yi) in
+    ((x - prevX, y - prevY), (x, y)))
+    ((0, 0), (0, 0))
+    Mouse.position
+  |> Signal.keepWhen dragging (0, 0)
+
+type Update
+  = Keys {delta : Float, keys : { x : Int, y : Int }}
+  | Pan (Float, Float)
+  | ClearTrail
+  | ToggleLeaveTrail
+  | SetScaleFactor Float
+  | SetSpeed Float
+  | SetTurningSpeed Float
+  | NoOp
+
+updateBox : Signal.Mailbox Update
+updateBox = Signal.mailbox NoOp
+
+keys : Signal { delta : Float, keys : { x : Int, y : Int } }
+keys =
   let delta = Time.fps 30 in
-  Signal.sampleOn delta (Signal.map2 (,) delta Keyboard.arrows)
+  Signal.sampleOn delta
+    (Signal.map2 (\d k -> {delta=d, keys=k}) delta Keyboard.arrows)
+
+updates : Signal Update
+updates =
+  Signal.mergeMany
+  [ Signal.map Pan pans
+  , Signal.map Keys keys
+  , updateBox.signal
+  ]
 
 futureLength = 1
+
+currentDet : State -> Float
+currentDet s =
+  let
+    (g11, g12, g21, g22) = s.metric
+    -- I compute posAndVel just before in update. If it's slow I can cut reuse the computation.
+    posAndVel = ODE.at s.currGeodesic s.geodesicPos
+    {-
+    x = getExn posAndVel coord1
+    y = getExn posAndVel coord2 -}
+    a11 = Expression.evaluateExn g11 posAndVel
+    a12 = Expression.evaluateExn g12 posAndVel
+    a21 = a12
+    a22 = Expression.evaluateExn g22 posAndVel
+  in
+  a11 * a22 - a21 * a12
 
 currentNorm : State -> (Float, Float) -> Float
 currentNorm s =
@@ -179,12 +255,62 @@ currentNorm s =
   in
   \(x, y) -> sqrt (x * (a11 * x + a12 * y) + y * (a21 * x + a22 * y))
 
+update : Update -> State -> State
+update u s =
+  case u of
+    NoOp ->
+      s
 
-update : (Float, Keys) -> State -> State
-update (dt, keys) s =
-  let rate         = 1 / 2000
-      angleRate    = 20 * pi / Time.second
-      geodesicPos' = s.geodesicPos + rate * dt * toFloat keys.y
+    Keys kd ->
+      updateKeys kd s
+
+    Pan (dx, dy) ->
+      let (x, y) = s.pan in
+      { s | pan <- (x + dx, y + dy) }
+
+    ToggleLeaveTrail ->
+      case s.trailStart of
+        Nothing ->
+          { s | trailStart <- Just s.geodesicPos }
+
+        Just start ->
+          let
+            trail' =
+              if s.geodesicPos > 0
+              then 
+                geodesicPathFromTill start s.geodesicPos s.currGeodesic
+                :: s.trail
+              else
+                s.trail
+          in
+          { s | trail <- trail', trailStart <- Nothing }
+
+    SetScaleFactor x ->
+      { s | scaleFactor <- x }
+
+    SetSpeed x ->
+      { s | speed <- x }
+
+    SetTurningSpeed x ->
+      { s | turningSpeed <- x }
+
+    ClearTrail ->
+      let
+        trailStart' = Maybe.map (\_ -> s.geodesicPos) s.trailStart
+      in
+      { s | trail <- [], trailStart <- trailStart' }
+
+shouldLeaveTrail : State -> Bool
+shouldLeaveTrail s =
+  case s.trailStart of { Just _ -> True; _ -> False }
+
+-- TODO change to pattern match on the record. Currently a syntax error (bug)
+updateKeys : {delta : Float, keys : {x:Int, y:Int}} -> State -> State
+updateKeys kd s =
+  let dt           = kd.delta
+      keys         = kd.keys
+      rate         = 1 / 2000
+      geodesicPos' = s.geodesicPos + s.speed * dt * toFloat keys.y
   in
   if keys.x == 0
   then
@@ -192,9 +318,19 @@ update (dt, keys) s =
   -- in the other branch, or less wastefully just turn before moving forward in the other branch.
     if geodesicPos' >= futureLength
     then
+      let trail' =
+        case s.trailStart of
+          Nothing ->
+            s.trail
+          Just start ->
+            geodesicPathFromTill start geodesicPos' s.currGeodesic
+            :: s.trail
+      in
       { s
       | geodesicPos <- 0
       , currGeodesic <- ODE.solve 0 futureLength (ODE.at s.currGeodesic s.geodesicPos) s.system 0.000001 1000
+      , trail <- trail'
+      , trailStart <- Maybe.map (\_ -> 0) s.trailStart
       }
     else { s | geodesicPos <- geodesicPos' }
   else
@@ -206,7 +342,7 @@ update (dt, keys) s =
         (getExn dcoord1 posAndVel, getExn dcoord2 posAndVel)
 
       angle' = 
-        Debug.log "angle" (atan2 velY velX) + angleRate * (-1 * toFloat keys.x)
+        Debug.log "angle" (atan2 velY velX) + s.turningSpeed * (-1 * toFloat keys.x)
 
       -- possibly have to normalize this vector wrt to the metric to get
       -- a unit speed geodesic
@@ -218,28 +354,57 @@ update (dt, keys) s =
         in
         Dict.insert dcoord1 (velX' / norm)
           (Dict.insert dcoord2 (velY' / norm) posAndVel)
+
+      trail' =
+        case s.trailStart of
+          Nothing ->
+            s.trail
+          Just start ->
+            if geodesicPos' > 0
+            then geodesicPathFromTill start geodesicPos' s.currGeodesic :: s.trail
+            else s.trail
     in
     { s
     | geodesicPos <- 0
     -- If need be, can solve in a smaller interval and refresh when
     -- geodesicPos is too big
     , currGeodesic <- ODE.solve 0 futureLength posAndVel' s.system 0.000001 1000
+    , trail <- trail'
+    , trailStart <- Maybe.map (\_ -> 0) s.trailStart
     }
 
-draw : Float -> State -> Form
-draw scaleFactor s =
+drawSpace : State -> Form
+drawSpace s =
   let posAndVel = ODE.at s.currGeodesic s.geodesicPos
-      x = scaleFactor * getExn coord1 posAndVel
-      y = scaleFactor * getExn coord2 posAndVel
-      dx = scaleFactor * getExn dcoord1 posAndVel
-      dy = scaleFactor * getExn dcoord2 posAndVel
+      xReal = getExn coord1 posAndVel
+      yReal = getExn coord2 posAndVel 
+      x = s.scaleFactor * xReal
+      y = s.scaleFactor * yReal
+      dx = s.scaleFactor * getExn dcoord1 posAndVel
+      dy = s.scaleFactor * getExn dcoord2 posAndVel
+      (px, py) = s.pan
   in
   group
   -- Would love to actually approximate circles by probing a fixed distance along geodesics.
   -- Instead I sort of approximate it by trying to keep its area roughly correct
-  [ circle 10 |> filled Color.black |> move (x, y)
+  [ circle (s.scaleFactor / (3 * sqrt (currentDet s))) |> filled Color.black |> move (x, y)
+  {-
+  [ move (x,y) 
+      (filled Color.black
+        (trueCircle s.system s.scaleFactor (xReal, yReal) 0.3)) -}
   , traced (solid Color.blue) (path [(x, y), (x + dx, y + dy)])
+  , case s.trailStart of
+      Just start ->
+        drawGeodesicFromTil
+          s.scaleFactor start s.geodesicPos s.currGeodesic 
+      Nothing ->
+        group []
+  , group
+    (List.map
+      (traced (solid Color.green) << path << List.map (\(x,y) -> (x*s.scaleFactor, y*s.scaleFactor)))
+      s.trail)
   ]
+  |> move (px, -py)
 
 drawGeodesic : Float -> ODE.Solution -> Form
 drawGeodesic scaleFactor sol =
@@ -249,6 +414,59 @@ drawGeodesic scaleFactor sol =
         (ODE.solutionValues sol)
   in
   traced (solid Color.red) (path pts)
+
+drawGeodesicTil : Float -> Float -> ODE.Solution -> Form
+drawGeodesicTil scaleFactor distance geodesic =
+  let
+    _ = Debug.log "distance" distance
+    toPt e = (scaleFactor * getExn coord1 e, scaleFactor * getExn coord2 e)
+    pts =
+      List.map snd
+        (takeWhile (\(t, pt) -> t <= distance) <| Debug.log "allpts"
+          (List.map2 (\t e ->
+            (t, toPt e))
+            (ODE.solutionParameters geodesic)
+            (ODE.solutionValues geodesic)))
+        ++ [ toPt (ODE.at geodesic distance) ]
+  in
+  traced (solid Color.green) (path pts)
+
+-- Pretty annoying that this is gonna get recomputed on every tick
+geodesicPathFromTill : Float -> Float -> ODE.Solution -> List (Float, Float)
+geodesicPathFromTill start stop geodesic =
+  let
+    toPt e =
+      (getExn coord1 e, getExn coord2 e)
+  in
+  path (
+  toPt (ODE.at geodesic start)
+  ::
+  List.map snd
+    (takeWhile (\(t, _) -> t <= stop)
+      (dropWhile (\(t, _) -> t <= start)
+        (List.map2 (\t e ->
+          (t, toPt e))
+          (ODE.solutionParameters geodesic)
+          (ODE.solutionValues geodesic))))
+    ++ [ toPt (ODE.at geodesic stop) ])
+
+drawGeodesicFromTil : Float -> Float -> Float -> ODE.Solution -> Form
+drawGeodesicFromTil scaleFactor start stop geodesic =
+  let
+    toPt e = (scaleFactor * getExn coord1 e, scaleFactor * getExn coord2 e)
+    pts =
+      toPt (ODE.at geodesic start)
+      ::
+      List.map snd
+        (takeWhile (\(t, _) -> t <= stop)
+          (dropWhile (\(t, _) -> t <= start)
+            (List.map2 (\t e ->
+              (t, toPt e))
+              (ODE.solutionParameters geodesic)
+              (ODE.solutionValues geodesic))))
+        ++ [ toPt (ODE.at geodesic stop) ]
+  in
+  traced (solid Color.green) (path pts)
 
 halfPlane =
   let c = Pow (Var coord2) -2 in
@@ -265,7 +483,7 @@ noparabola =
   (c, Constant 0, Constant 0, c)
 
 -- this is a nice one
-mystery =
+curvy =
   let
     c =
       Pow
@@ -274,14 +492,107 @@ mystery =
   in
   (c, Constant 0, Constant 0, c)
 
+mystery =
+  let
+    c = Var coord2
+  in
+  (c, Constant 0, Constant 0, c)
+
+px x = toString x ++ "px"
+
+trueCircle : ODE.System -> Float -> (Float, Float) -> Float -> List (Float, Float)
+trueCircle system scaleFactor (x, y) r =
+  let n = 100
+      dt = 2 * pi / n
+      env0 = Dict.fromList [(coord1, x), (coord2, y), (dcoord1, 0), (dcoord2, 0)]
+      go acc i =
+        if i == n
+        then polygon acc
+        else
+          let
+            theta = (2*pi*i)/n
+            vx = cos theta -- do I have to normalise...?
+            vy = sin theta
+            sol =
+              ODE.solve 0 r
+                (Dict.insert dcoord1 vx (Dict.insert dcoord2 vy env0))
+                system
+                0.000001
+                1000
+            solAtR = ODE.at sol r
+          in
+          go
+            ((scaleFactor * getExn coord1 solAtR, scaleFactor * getExn coord2 solAtR) :: acc)
+            (i + 1)
+  in
+  go [] 0
+
+draw : (Int, Int) -> State -> Element
+draw (w, h) s =
+  let
+    toggleTrailButton =
+      Html.button
+      [ onClick updateBox.address ToggleLeaveTrail
+      ]
+      [ Html.text "Toggle trail"
+      ]
+
+    clearTrailButton =
+      Html.button
+      [ onClick updateBox.address ClearTrail
+      ]
+      [ Html.text "Clear trail" ]
+
+    speedSlider =
+      slider { min = 0 , max = 10/2000, value = s.speed, step = Nothing}
+        (Signal.message updateBox.address << SetSpeed)
+
+    turningSpeedSlider =
+      slider { min = pi/Time.second, max = 100*pi/Time.second, value = s.turningSpeed ,step = Nothing}
+        (Signal.message updateBox.address << SetTurningSpeed)
+
+    scaleFactorSlider =
+      slider { min = 1, max = 1000, value = s.scaleFactor, step = Nothing}
+        (Signal.message updateBox.address << SetScaleFactor)
+
+    sideBarWidth =
+      200
+
+    space =
+      collage (w - sideBarWidth) h [drawSpace s]
+
+    sideBar =
+      div
+      [ style
+        [ ("width", px sideBarWidth) 
+        , ("float", "right")
+        ]
+      ]
+      [ toggleTrailButton
+      , clearTrailButton
+      , speedSlider
+      , turningSpeedSlider
+      , scaleFactorSlider
+      ]
+  in
+  div [ style [("width", "100%")] ]
+  [ sideBar
+  , div
+    [ onMouseDown mouseDownsInSpaceDivBox.address () 
+    , style [("width", px (w - sideBarWidth))]
+    ]
+    [ Html.fromElement space ]
+  ]
+  |> Html.toElement w h
+
 main =
   let
     system =
-      geodesicSystem mystery
+      geodesicSystem poincare
 
     init = Dict.fromList
-      [ (coord1, 0)
-      , (coord2, 1)
+      [ (coord1, 0.5)
+      , (coord2, 0.5)
       , (dcoord1, 0)
       , (dcoord2, 1)
       ]
@@ -289,13 +600,32 @@ main =
     s0 =
       { geodesicPos = 0
       , system = system
-      , metric = mystery
+      , metric = poincare
       , currGeodesic = ODE.solve 0 futureLength init system 0.000001 1000
+      , scaleFactor = 200
+      , pan = (0, 0)
+      , trailStart = Just 0
+      , trail = []
+      , speed = 1 / 2000
+      , turningSpeed = 20 * pi / Time.second
       }
 
-    state = Signal.foldp update s0 input
+    state = Signal.foldp update s0 updates
   in
-  Signal.map (\s -> let x = Debug.watch "pos" (ODE.at s.currGeodesic s.geodesicPos) in let _ = Debug.watch "state" s in collage 500 500 [draw 200 s, drawGeodesic 200 s.currGeodesic]) state
+  Signal.map2 (\(w,h) s ->
+    let x = Debug.watch "pos" (ODE.at s.currGeodesic s.geodesicPos) in
+    let _ = Debug.watch "state" s in
+    draw (w,h) s)
+
+                                     {-
+    let (px, py) = s.pan in
+    collage w h
+      (List.map (move (px,-py)) <|
+      [ draw s
+      ]
+      )) -}
+    Window.dimensions
+    state
   {-
   let
     init = Dict.fromList

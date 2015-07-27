@@ -231,6 +231,22 @@ currentDet s =
   in
   a11 * a22 - a21 * a12
 
+normAt : TwoForm -> (Float, Float) -> (Float, Float) -> Float
+normAt metric (xPos, yPos) =
+  let
+    (g11, g12, g21, g22) = metric
+    -- I compute posAndVel just before in update. If it's slow I can cut reuse the computation.
+    posEnv = Dict.fromList [(coord1, xPos), (coord2, yPos)]
+    {-
+    x = getExn posAndVel coord1
+    y = getExn posAndVel coord2 -}
+    a11 = Expression.evaluateExn g11 posEnv
+    a12 = Expression.evaluateExn g12 posEnv
+    a21 = a12
+    a22 = Expression.evaluateExn g22 posEnv
+  in
+  \(x, y) -> sqrt (x * (a11 * x + a12 * y) + y * (a21 * x + a22 * y))
+
 currentNorm : State -> (Float, Float) -> Float
 currentNorm s =
   let
@@ -598,6 +614,20 @@ drawGeodesicFromTil scaleFactor start stop geodesic =
 closedCircle r =
   circle r ++ [(r, 0)]
 
+cylinderOverlay scaleFactor =
+  let nRays = 8 in
+  group
+  [ group
+    (List.map (\i -> traced (dashed Color.black) (closedCircle (i * scaleFactor)))
+      [1..10])
+  , group
+    (List.map (\i ->
+      let t = i * 2 * pi / nRays in
+      traced (dashed Color.black)
+        (segment (0,0) (10 * scaleFactor * cos t, 10 * scaleFactor * sin t)))
+      [1..nRays])
+  ]
+
 metricList =
   [ { name = "Upper half plane"
     , twoForm = halfPlane
@@ -615,7 +645,7 @@ metricList =
     , scaleFactor = 2 * defaultScaleFactor
     , pan = defaultPan
     }
-  , { name = "Sphere"
+  , { name = "Strip sphere"
     , twoForm = sphere
     , init = Dict.fromList [(coord1, pi), (coord2, pi/2), (dcoord1, -0.04), (dcoord2, 1)]
     , overlay = \scaleFactor ->
@@ -625,24 +655,19 @@ metricList =
     , scaleFactor = defaultScaleFactor
     , pan = (-pi*defaultScaleFactor, pi*defaultScaleFactor/2)
     }
+  , { name = "Orthographic sphere"
+    , twoForm = orthographicSphere
+    , init = Dict.fromList [(coord1, 1.1085813794088752), (coord2, 0.43416503851501376), (dcoord1, 1.0618525452786418), (dcoord2, 0.3927089533282449)]
+    , overlay = cylinderOverlay
+    , scaleFactor = 66.27618564857013
+    , pan = defaultPan
+    }
   , { name = "Cylinder"
     , twoForm = cylinder
     , init = Dict.fromList [(coord1, 0.5), (coord2, 0), (dcoord1, 0), (dcoord2, 1)]
     , scaleFactor = defaultScaleFactor
     , pan = defaultPan
-    , overlay = \scaleFactor ->
-        let nRays = 8 in
-        group
-        [ group
-          (List.map (\i -> traced (dashed Color.black) (closedCircle (i * scaleFactor)))
-            [1..10])
-        , group
-          (List.map (\i ->
-            let t = i * 2 * pi / nRays in
-            traced (dashed Color.black)
-              (segment (0,0) (10 * scaleFactor * cos t, 10 * scaleFactor * sin t)))
-            [1..nRays])
-        ]
+    , overlay = cylinderOverlay
     }
   , { name = "Flat"
     , twoForm = flat
@@ -651,6 +676,7 @@ metricList =
     , scaleFactor = defaultScaleFactor
     , pan = defaultPan
     }
+  {-
   , { name = "Curvy"
     , twoForm = curvy
     , init = Dict.fromList [(coord1, 0.5), (coord2, 1), (dcoord1, 0), (dcoord2, 1)]
@@ -658,7 +684,15 @@ metricList =
     , scaleFactor = defaultScaleFactor
     , pan = defaultPan
     }
+  -}
   ]
+  |> List.map (\m ->
+    let ((dx, dy) as v) = (getExn dcoord1 m.init, getExn dcoord2 m.init)
+        pos = (getExn coord1 m.init, getExn coord2 m.init)
+        norm = normAt m.twoForm pos v
+        init' = Dict.insert dcoord1 (dx / norm) (Dict.insert dcoord2 (dy / norm) m.init)
+    in
+    { m | init <- init' })
 
 metricArray = Array.fromList metricList
 
@@ -668,6 +702,15 @@ sphere =
   , Constant 0
   , Constant 1
   )
+
+orthographicSphere =
+  let
+    x = Var coord1
+    y = Var coord2
+    r2 = Add (Mul x x) (Mul y y)
+    c = Mul (Constant 4) (Pow (Add (Constant 1) r2) -2)
+  in
+  ( c, Constant 0, Constant 0, c )
 
 flat = (Constant 1, Constant 0, Constant 0 , Constant 1)
 
@@ -856,6 +899,33 @@ draw (w, h) s =
       ]
       [item]
 
+    helpCard =
+      div
+      [ class "mdl-card mdl-shadow--2dp demo-card-square" 
+      , style
+        [ ("width", px sideBarWidth)
+        , ("position", "absolute")
+        , ("top", px 10)
+        , ("left", px 10)
+        ]
+      ]
+      [ div
+        [ class "mdl-card__title" 
+        , style
+          [ ("backgroundColor","#46B6AC")
+          , ("color", "white")
+          ]
+        ]
+        [ Html.h2 [ class "mdl-card__title-text" ]
+          [ Html.text "Directions" ]
+        ]
+      , div
+        [ style [("padding", px 10)] ]
+        [ Html.p [] [Html.text "Use the up arrow key to go forward and the left and right arrow keys to turn."]
+        , Html.p [] [Html.text "Zoom in and out by scrolling."]
+        ]
+      ]
+
     metricCard =
       div
       [ class "mdl-card mdl-shadow--2dp demo-card-square" 
@@ -875,10 +945,13 @@ draw (w, h) s =
         [ style [("paddingTop", px 15)] ]
         [ Html.ul
           [ style
-            [ ("listStyleType", "none") ]
+            [ ("listStyleType", "none")
+            , ("paddingLeft", px 18)
+            ]
           ]
           (List.indexedMap (\i m ->
-            Html.li []
+            Html.li
+            [ style [("marginBottom", px 5)] ]
             [ Html.label
               [ onClick updateBox.address (SetMetric (Left i))
               , class "mdl-radio mdl-js-radio mdl-js-ripple-effect"
@@ -905,7 +978,7 @@ draw (w, h) s =
       [ style
         [ ("width", px sideBarWidth) 
         , ("position", "absolute")
-        , ("top", "0")
+        , ("top", "10px")
         , ("right", "50px")
         , ("zIndex", "10")
         , ("listStyleType", "none")
@@ -913,11 +986,17 @@ draw (w, h) s =
         , ("margin", "0")
         ]
       ]
-      [ wrapNonSlider toggleTrailCheck
+      [ Html.li
+        [ style
+          [ ("paddingLeft", annoyingOffsetForSliders)
+          , ("paddingRight", annoyingOffsetForSliders)
+          ]
+        ]
+        [metricCard]
+      , wrapNonSlider toggleTrailCheck
       , wrapNonSlider clearTrailButton
       , wrapSlider (labelSlider "Speed" speedSlider)
       , wrapSlider (labelSlider "Turn speed" turningSpeedSlider)
-      , Html.li [] [metricCard]
       ]
   in
   div [ style [("width", "100%")] ]
@@ -927,6 +1006,7 @@ draw (w, h) s =
   , Html.node "script"
     [ type' "text/javascript", src "https://storage.googleapis.com/code.getmdl.io/1.0.1/material.min.js" ]
     []
+  , helpCard
   , sideBar
   , div
     [ onMouseDown mouseDownsInSpaceDivBox.address () 
@@ -969,10 +1049,7 @@ main =
     state =
       Signal.foldp update s0 updates
   in
-  Signal.map2 (\(w,h) s ->
-    let x = Debug.watch "pos" (ODE.at s.currGeodesic s.geodesicPos) in
-    let _ = Debug.watch "state" s in
-    draw (w,h) s)
+  Signal.map2 draw
     Window.dimensions
     state
 

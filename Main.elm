@@ -922,7 +922,7 @@ draw (w, h) s =
       , div
         [ style [("padding", px 10)] ]
         [ Html.p [] [Html.text "Use the up arrow key to go forward and the left and right arrow keys to turn."]
-        , Html.p [] [Html.text "Zoom in and out by scrolling."]
+        , Html.p [] [Html.text "Scroll to zoom, click and drag to pan."]
         ]
       ]
 

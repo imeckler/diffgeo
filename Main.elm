@@ -5,6 +5,7 @@ import ODE
 import Dict
 import Graphics.Collage exposing (..)
 import Graphics.Element exposing (Element)
+import Json.Decode exposing ((:=))
 import Debug
 import Color
 import Signal
@@ -15,8 +16,8 @@ import Util exposing (..)
 import Time
 import Window
 import Html exposing (div)
-import Html.Events exposing (onMouseDown, onClick)
-import Html.Attributes exposing (style)
+import Html.Events exposing (onMouseDown, onClick, on)
+import Html.Attributes exposing (style, type', attribute, href, rel, src, class)
 import Slider exposing (slider)
 
 -- we use the coordinates coord1 and coord2
@@ -199,6 +200,8 @@ type Update
   | Pan (Float, Float)
   | ClearTrail
   | ToggleLeaveTrail
+  | ToggleShowFuture
+  | Zoom Float
   | SetScaleFactor Float
   | SetSpeed Float
   | SetTurningSpeed Float
@@ -260,6 +263,9 @@ update u s =
   case u of
     NoOp ->
       s
+
+    Zoom z ->
+      { s | scaleFactor <- s.scaleFactor * (1.01 ^ z) }
 
     Keys kd ->
       updateKeys kd s
@@ -530,16 +536,41 @@ trueCircle system scaleFactor (x, y) r =
 draw : (Int, Int) -> State -> Element
 draw (w, h) s =
   let
-    toggleTrailButton =
-      Html.button
-      [ onClick updateBox.address ToggleLeaveTrail
+    labelSlider label sliderElt =
+      div [ style [("textAlign", "center")] ]
+      [ Html.text label
+      , sliderElt
       ]
-      [ Html.text "Toggle trail"
+
+    mkCheckBox id label checked upd =
+      Html.label
+      [ class "mdl-checkbox mdl-js-checkbox mdl-js-ripple-effect"
+      , Html.Attributes.for id
       ]
+      [ Html.input
+        ((if checked then [attribute "checked" ""] else []) ++
+        [ type' "checkbox"
+        , class "mdl-checkbox__input"
+        , Html.Attributes.id id
+        , onClick updateBox.address upd
+        ])
+        []
+      , Html.span
+        [ class "mdl-checkbox__label" ]
+        [ Html.text label ]
+      ]
+
+    toggleTrailCheck =
+      mkCheckBox "toggleTrailCheck" "Leave trail" (shouldLeaveTrail s) ToggleLeaveTrail
+
+    toggleShowFutureCheck =
+      mkCheckBox "toggleShowFutureCheck" "Show extended line"
+        s.showFuture ToggleShowFuture
 
     clearTrailButton =
       Html.button
       [ onClick updateBox.address ClearTrail
+      , class "mdl-button mdl-js-button mdl-button--raised mdl-js-ripple-effect mdl-button--colored"
       ]
       [ Html.text "Clear trail" ]
 
@@ -552,34 +583,67 @@ draw (w, h) s =
         (Signal.message updateBox.address << SetTurningSpeed)
 
     scaleFactorSlider =
-      slider { min = 1, max = 1000, value = s.scaleFactor, step = Nothing}
+      slider
+        { min = 1, max = 1000, value = s.scaleFactor, step = Nothing }
         (Signal.message updateBox.address << SetScaleFactor)
 
+    annoyingOffsetForSliders = px 26
+
     sideBarWidth =
-      200
+      300
 
     space =
-      collage (w - sideBarWidth) h [drawSpace s]
+      collage w h [drawSpace s]
 
-    sideBar =
-      div
+    wrapSlider item =
+      Html.li
       [ style
-        [ ("width", px sideBarWidth) 
-        , ("float", "right")
+        [ ("paddingTop", px 10)
+        , ("paddingBottom", px 10)
         ]
       ]
-      [ toggleTrailButton
-      , clearTrailButton
-      , speedSlider
-      , turningSpeedSlider
-      , scaleFactorSlider
+      [item]
+
+    wrapNonSlider item =
+      Html.li
+      [ style
+        [ ("paddingLeft", annoyingOffsetForSliders)
+        , ("paddingTop", px 10), ("paddingBottom", px 10)
+        ]
+      ]
+      [item]
+
+    sideBar =
+      Html.ul
+      [ style
+        [ ("width", px sideBarWidth) 
+        , ("position", "absolute")
+        , ("top", "0")
+        , ("right", "0")
+        , ("zIndex", "10")
+        , ("listStyleType", "none")
+        , ("padding", "0")
+        , ("margin", "0")
+        ]
+      ]
+      [ wrapNonSlider toggleTrailCheck
+      , wrapNonSlider clearTrailButton
+      , wrapSlider (labelSlider "Speed" speedSlider)
+      , wrapSlider (labelSlider "Turn speed" turningSpeedSlider)
       ]
   in
   div [ style [("width", "100%")] ]
-  [ sideBar
+  [ Html.node "link"
+    [ rel "stylesheet", href "https://storage.googleapis.com/code.getmdl.io/1.0.1/material.indigo-pink.min.css" ]
+    []
+  , Html.node "script"
+    [ type' "text/javascript", src "https://storage.googleapis.com/code.getmdl.io/1.0.1/material.min.js" ]
+    []
+  , sideBar
   , div
     [ onMouseDown mouseDownsInSpaceDivBox.address () 
-    , style [("width", px (w - sideBarWidth))]
+    , on "wheel" ("deltaY" := Json.Decode.float) (\z ->
+        Signal.message updateBox.address (Zoom z))
     ]
     [ Html.fromElement space ]
   ]
@@ -606,8 +670,8 @@ main =
       , pan = (0, 0)
       , trailStart = Just 0
       , trail = []
-      , speed = 1 / 2000
-      , turningSpeed = 20 * pi / Time.second
+      , speed = 2 / 2000
+      , turningSpeed = 30 * pi / Time.second
       }
 
     state = Signal.foldp update s0 updates
@@ -616,14 +680,6 @@ main =
     let x = Debug.watch "pos" (ODE.at s.currGeodesic s.geodesicPos) in
     let _ = Debug.watch "state" s in
     draw (w,h) s)
-
-                                     {-
-    let (px, py) = s.pan in
-    collage w h
-      (List.map (move (px,-py)) <|
-      [ draw s
-      ]
-      )) -}
     Window.dimensions
     state
   {-

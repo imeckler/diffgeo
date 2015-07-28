@@ -1022,14 +1022,17 @@ draw (w, h) s =
     helpCard =
       let
         helpContent = """
-Roughly speaking, a geometry
-is a [notion of distance][0].
-Though they look curved, the paths you travel
-along are actually straight lines in each geometry
-in the sense that they are the [shortest paths](https://en.wikipedia.org/wiki/Geodesic)
+Here, you can explore a variety of unusual geometries.
+Roughly speaking, a geometry is a [notion of distances][0]
 between points.
+Though they look curved, the paths you travel
+along are actually "straight lines"
+in the sense that they are the shortest paths between points
+(with respect to an unusual notion of distance).
+Such paths are called [geodesics](https://en.wikipedia.org/wiki/Geodesic).
 
-Use the up arrow key to go forward and the left and right arrow keys to turn.
+Use the up arrow key to go forward along the geodesic in the direction
+you're facing and the left and right arrow keys to change direction.
 
 Scroll to zoom, click and drag to pan.
 

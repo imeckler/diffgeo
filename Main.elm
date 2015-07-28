@@ -21,6 +21,7 @@ import Html exposing (div)
 import Html.Events exposing (onMouseDown, onClick, on)
 import Html.Attributes exposing (style, type', attribute, href, rel, src, class)
 import Slider exposing (slider)
+import TextEntry exposing (textEntry)
 
 -- we use the coordinates coord1 and coord2
 
@@ -142,16 +143,27 @@ geodesicSystem g =
   in
   ODE.compile spec
 
+setAt : (Bit, Bit) -> a -> (a,a,a,a) -> (a,a,a,a)
+setAt (x,y) a (a1,a2,a3,a4) =
+  case (x, y) of
+    (O, O) -> (a, a1, a3, a4)
+    (O, I) -> (a1, a, a3, a4)
+    (I, O) -> (a1, a2, a, a4)
+    (I, I) -> (a1, a2, a3, a4)
+
+-- My, this is getting crufty.
 type alias State =
-  { system       : ODE.System
-  , metric       : TwoForm -- Can precompile if this is slow
-  , overlay      : Float -> Form
-  , metricIndex  : Either Int TwoForm
-  , currGeodesic : ODE.Solution
-  , nextGeodesic : ODE.Solution
-  , geodesicPos  : Float
-  , scaleFactor  : Float
-  , pan          : (Float, Float)
+  { system        : ODE.System
+  , metric        : TwoForm -- Can precompile if this is slow
+  , metricStrings : (String, String, String, String)
+  , metricParsed  : Bool
+  , overlay       : Float -> Form
+  , metricIndex   : Either Int TwoForm
+  , currGeodesic  : ODE.Solution
+  , nextGeodesic  : ODE.Solution
+  , geodesicPos   : Float
+  , scaleFactor   : Float
+  , pan           : (Float, Float)
   -- If we should leave a trail, this is Just t where t is where along
   -- the current geodesic we should start the trail. Otherwise it is Nothing
   , trailStart   : Maybe Float
@@ -184,6 +196,8 @@ pans =
     Mouse.position
   |> Signal.keepWhen dragging (0, 0)
 
+type Bit = O | I
+
 type Update
   = Keys {delta : Float, keys : { x : Int, y : Int }}
   | Pan (Float, Float)
@@ -194,6 +208,7 @@ type Update
   | SetSpeed Float
   | SetTurningSpeed Float
   | SetMetric (Either Int TwoForm)
+  | EditMetric (Bit, Bit) String
   | NoOp
 
 updateBox : Signal.Mailbox Update
@@ -269,6 +284,37 @@ update u s =
     NoOp ->
       s
 
+    EditMetric ij s ->
+      let
+        metricStrings' =
+          setAt ij s s.metricStrings'
+
+        exprMays =
+          List.map Expression.parse
+            (fourToList metricStrings')
+      in
+      case sequenceMaybe exprMays of
+        Nothing ->
+          { s | metricParsed <- False } -- Just sit tight
+        Just m ->
+          let metric' = fourFromList m
+              system = geodesicSystem metric'
+              init = ODE.at s.currGeodesic s.geodesicPos
+              currGeodesic = ODE.solve 0 futureLength init system 0.000001 1000
+          in
+          { s
+          | metric <- metric'
+          , metricIndex <- Right metric' -- TODO: MetricIndex should really just be Maybe
+          , metricStrings <- metricStrings'
+          , overlay <- \_ -> group []
+          , system <- system
+          , trailStart <- Maybe.map (\_ -> 0) s.trailStart
+          , currGeodesic <- currGeodesic
+          , nextGeodesic <- ODE.solve 0 futureLength (ODE.at currGeodesic futureLength) 0.000001 1000
+          , geodesicPos <- 0
+          , metricParsed <- True
+          }
+
     SetMetric ig ->
       let
         m =
@@ -292,7 +338,9 @@ update u s =
       in
       { s
       | metric <- m.twoForm
+      , metricStrings <- fourMap Expression.toString m.twoForm
       , metricIndex <- ig
+      , metricParsed <- True
       , overlay <- m.overlay
       , system <- system
       , trailStart <- Maybe.map (\_ -> 0) s.trailStart
@@ -305,8 +353,12 @@ update u s =
       }
 
 
+    -- TODO: Zoom should fix the point the mouse is over
     Zoom z ->
-      { s | scaleFactor <- s.scaleFactor * (1.01 ^ (-z)) }
+      let scaleFactor' = s.scaleFactor * (1.01 ^ (-z))  in
+      { s
+      | scaleFactor <- scaleFactor'
+      }
 
     Keys kd ->
       updateKeys kd s
@@ -631,10 +683,10 @@ cylinderOverlay scaleFactor =
 metricList =
   [ { name = "Upper half plane"
     , twoForm = halfPlane
-    , init = Dict.fromList [(coord1, 0), (coord2, 1), (dcoord1, 1), (dcoord2, 0)]
+    , init = Dict.fromList [(coord1, 0), (coord2, 2), (dcoord1, 1), (dcoord2, 0)]
     , overlay = \scaleFactor ->
         traced (dashed Color.black) (segment (-1000 * scaleFactor, 0) (1000 * scaleFactor, 0))
-    , scaleFactor = defaultScaleFactor
+    , scaleFactor = defaultScaleFactor / 2
     , pan = (0, defaultScaleFactor)
     }
   , { name = "Poincare disk"
@@ -694,6 +746,13 @@ metricList =
     in
     { m | init <- init' })
 
+-- Assumes a quadratic form as argument
+{-
+asMetric : Expression -> Maybe TwoForm
+asMetric expr =
+  case expr of
+    Mul (Var "dx") y ->
+-}
 metricArray = Array.fromList metricList
 
 sphere =
@@ -927,6 +986,10 @@ draw (w, h) s =
         ]
       ]
 
+    customMetricEntry =
+      Html.li
+      [ style [("marginBottom", px 5)] ]
+
     metricCard =
       div
       [ class "mdl-card mdl-shadow--2dp demo-card-square" 
@@ -970,9 +1033,48 @@ draw (w, h) s =
                 [ Html.text m.name ]
               ]
             ])
-            metricList)
+            metricList
+          ++
+          [ Html.li
+            [ style [("marginBottom", px 5)] ]
+            [ Html.label
+              [ onClick updateBox.address (SetMetric (Right s.metric))
+              , class "mdl-radio mdl-js-radio mdl-js-ripple-effect"
+              , Html.Attributes.for "metric-custom"
+              ]
+              [ Html.input
+                ((case s.metricIndex of { Right _ -> [attribute "checked" ""]; _ -> [] }) ++
+                [ type' "radio"
+                , Html.Attributes.id "metric-custom"
+                , class "mdl-radio__button"
+                , Html.Attributes.name "metric"
+                ]) 
+                []
+              , Html.span [ class "mdl-radio__label" ]
+                [ Html.text "Custom" ]
+              ]
+            ]
+          ]
+          )
+        , Html.table
+          [ style
+            [ ("borderTop", "1px solid #DDD")
+            ]
+          ]
+          [ Html.tr []
+            [ Html.td [] [textEntry mstr00 (Signal.message updateBox.address << EditMetric (O,O))]
+            , Html.td [] [textEntry mstr01 (Signal.message updateBox.address << EditMetric (O,I))]
+            ]
+          , Html.tr []
+            [ Html.td [] [textEntry mstr10 (Signal.message updateBox.address << EditMetric (I,O))]
+            , Html.td [] [textEntry mstr11 (Signal.message updateBox.address << EditMetric (I,I))]
+            ]
+          ]
         ]
       ]
+
+    (mstr00,mstr01,mstr10,mstr11) =
+      s.metricStrings
 
     sideBar =
       Html.ul
@@ -1021,6 +1123,13 @@ draw (w, h) s =
 defaultScaleFactor = 200
 defaultPan = (0, 0)
 
+fourMap : (a -> b) -> (a, a, a, a) -> (b, b, b, b)
+fourMap f (a1,a2,a3,a4) = (f a1, f a2, f a3, f a4)
+
+fourToList : (a, a, a, a) -> List a
+fourToList (a1,a2,a3,a4) = [a1, a2, a3, a4]
+fourFromList [a1,a2,a3,a4] = (a1,a2,a3,a4)
+
 main =
   let
     system =
@@ -1035,6 +1144,7 @@ main =
       { geodesicPos = 0
       , system = system
       , metric = metric0.twoForm
+      , metricStrings = fourMap Expression.toString metric0.twoForm
       , overlay = metric0.overlay
       , metricIndex = Left 1
       , currGeodesic = currGeodesic

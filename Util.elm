@@ -3,12 +3,26 @@ module Util where
 import Dict
 import Debug
 import Array exposing (Array)
+import Maybe
 
 (!) : Array a -> Int -> a
 (!) arr i =
   case Array.get i arr of
     Just x -> x
     Nothing -> Debug.crash "!: Index not in array"
+
+sequenceMaybe : List (Maybe a) -> Maybe (List a)
+sequenceMaybe xs =
+  case xs of
+    Nothing :: _ ->
+      Nothing
+
+    Just x :: xs' ->
+      Maybe.map ((::) x) (sequenceMaybe xs')
+
+    [] ->
+      Just []
+
 
 getExn : comparable -> Dict.Dict comparable v -> v
 getExn k d =
@@ -47,3 +61,11 @@ revMap f =
   in
   go []
 
+maybeMap2 : (a -> b -> c) -> Maybe a -> Maybe b -> Maybe c
+maybeMap2 f ma mb =
+  case ma of
+    Just a ->
+      case mb of
+        Just b -> Just (f a b)
+        Nothing -> Nothing
+    Nothing -> Nothing

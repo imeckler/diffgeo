@@ -6,6 +6,7 @@ module Expression
   , parse
   , derivative
   , optimize
+  , toString
   ) where
 
 {-| A type for simple mathematical expressions.
@@ -47,6 +48,32 @@ type alias Environment = Dict.Dict String Float
 {-| Parse an expression from a string. -}
 parse : String -> Result String Expression
 parse = Native.ParseExpression.parse
+
+toString : Expression -> String
+toString =
+  let parenthesize x = "(" ++ x ++ ")"
+  in \expr ->
+  case expr of
+    Var x ->
+      x
+    Constant x ->
+      Basics.toString x
+    Add e1 e2 ->
+      parenthesize (toString e1 ++ " + " ++ toString e2)
+    Mul e1 e2 ->
+      parenthesize (toString e1 ++ " * " ++ toString e2)
+    Exp b e1 ->
+      (if b < 0 then parenthesize else identity) (Basics.toString b) ++ "^" ++ toString e1
+    Pow e1 p ->
+      toString e1 ++ "^" ++ Basics.toString p
+    LogBase b e1 ->
+      if b == e
+      then "log(" ++ toString e1 ++ ")"
+      else "log(" ++ Basics.toString b ++ "," ++ toString e1 ++ ")"
+    Sin e1 ->
+      "sin(" ++ toString e1 ++ ")"
+    Cos e1 ->
+      "cos(" ++ toString e1 ++ ")"
 
 maybeMap2 : (a -> b -> c) -> Maybe a -> Maybe b -> Maybe c
 maybeMap2 f ma mb =

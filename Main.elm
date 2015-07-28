@@ -12,20 +12,22 @@ import Color
 import Signal
 import Signal.Extra as Signal
 import Mouse
-import Keyboard
+import Keyboard exposing (KeyCode)
 import Util exposing (..)
 import Time
 import Window
 import Either exposing (Either(..))
 import Html exposing (div)
-import Html.Events exposing (onMouseDown, onClick, on)
+import Html.Events exposing (onMouseDown, onClick, on, onKeyUp, onKeyDown)
 import Html.Attributes exposing (style, type', attribute, href, rel, src, class)
 import Slider exposing (slider)
 import Set
+import Native.Click
+import Markdown
 
 parseTwoFormExpression str =
   Expression.parse str `Result.andThen` \expr ->
-    if Set.toList (Expression.variables expr) == [coord1, coord2]
+    if List.all (\v -> v == coord1 || v == coord2) (Set.toList (Expression.variables expr))
     then Ok expr
     else Err "Unknown variable"
 
@@ -169,10 +171,10 @@ geodesicSystem g =
 setAt : (Bit, Bit) -> a -> (a,a,a,a) -> (a,a,a,a)
 setAt (x,y) a (a1,a2,a3,a4) =
   case (x, y) of
-    (O, O) -> (a, a1, a3, a4)
+    (O, O) -> (a, a2, a3, a4)
     (O, I) -> (a1, a, a3, a4)
     (I, O) -> (a1, a2, a, a4)
-    (I, I) -> (a1, a2, a3, a4)
+    (I, I) -> (a1, a2, a3, a)
 
 -- My, this is getting crufty.
 type alias State =
@@ -192,6 +194,7 @@ type alias State =
   , trail        : List (List (Float, Float))
   , speed        : Float
   , turningSpeed : Float
+  , keysActive   : Bool
   }
 
 -- Inputs
@@ -200,6 +203,8 @@ mouseDownsInSpaceDivBox = Signal.mailbox ()
 
 toggleLeaveTrailBox : Signal.Mailbox ()
 toggleLeaveTrailBox = Signal.mailbox ()
+
+-- textBox : Signal.Mailbox 
 
 pans : Signal (Float, Float)
 pans =
@@ -231,14 +236,39 @@ type Update
   | SetTurningSpeed Float
   | SetMetric (Either Int TwoForm)
   | EditMetric (Bit, Bit) String
+  | KeysActive Bool
   | NoOp
 
 updateBox : Signal.Mailbox Update
 updateBox = Signal.mailbox NoOp
 
+keyEventsBox : Signal.Mailbox (KeyCode, Bool)
+keyEventsBox = Signal.mailbox (0, False)
+
+keysDown : Signal (Set.Set KeyCode)
+keysDown =
+  Signal.map (Debug.log "keysDown") <|
+  Signal.foldp (\(k,dir) s ->
+    if dir then Set.insert k s else Set.remove k s)
+    Set.empty
+    keyEventsBox.signal
+
 keys : Signal { delta : Float, keys : { x : Int, y : Int } }
 keys =
-  let delta = Time.fps 30 in
+  let
+    delta = Time.fps 30
+    {-
+    boolToInt b = if b then 1 else 0
+    arrows =
+      Signal.map (\pressed ->
+        let up = boolToInt (Set.member 38 pressed)
+            down = boolToInt (Set.member 40 pressed)
+            right = boolToInt (Set.member 39 pressed)
+            left = boolToInt (Set.member 37 pressed)
+        in
+        { x = right - left, y = up - down })
+        keysDown -}
+  in
   Signal.sampleOn delta
     (Signal.map2 (\d k -> {delta=d, keys=k}) delta Keyboard.arrows)
 
@@ -248,6 +278,7 @@ updates =
   [ Signal.map Pan pans
   , Signal.map Keys keys
   , updateBox.signal
+  , Signal.map KeysActive bodyFocused
   ]
 
 futureLength = 1
@@ -302,14 +333,17 @@ currentNorm s =
 
 update : Update -> State -> State
 update u s =
-  case Debug.log "update" u of
+  case u of
     NoOp ->
       s
+
+    KeysActive b ->
+      {s | keysActive <- b}
 
     EditMetric ij str ->
       let
         metricStrings' =
-          Debug.log "metricStrings" <| setAt ij str s.metricStrings
+          setAt ij str s.metricStrings
 
         exprRess =
           List.map parseTwoFormExpression
@@ -331,6 +365,7 @@ update u s =
           , metricStrings <- metricStrings'
           , overlay <- \_ -> group []
           , system <- system
+          , trail <- geodesicPathFromTill 0 s.geodesicPos s.currGeodesic :: s.trail
           , trailStart <- Maybe.map (\_ -> 0) s.trailStart
           , currGeodesic <- currGeodesic
           , nextGeodesic <- ODE.solve 0 futureLength (ODE.at currGeodesic futureLength) system 0.000001 1000
@@ -382,7 +417,7 @@ update u s =
       }
 
     Keys kd ->
-      updateKeys kd s
+      if s.keysActive then updateKeys kd s else s
 
     Pan (dx, dy) ->
       let (x, y) = s.pan in
@@ -980,11 +1015,29 @@ draw (w, h) s =
       [item]
 
     helpCard =
+      let
+        helpContent = """
+Use the up arrow key to go forward and the left and right arrow keys to turn.
+
+Scroll to zoom, click and drag to pan.
+
+Try out all the different geometries and make your own using
+the text entries.
+
+Roughly speaking, a geometry
+is a [notion of distance](https://en.wikipedia.org/wiki/Metric_(mathematics)).
+Though they look curved, the paths you travel
+along are actually straight lines in each geometry
+in the sense that they are the [shortest paths](https://en.wikipedia.org/wiki/Geodesic)
+between points.
+
+        """
+      in
       div
       [ class "mdl-card mdl-shadow--2dp demo-card-square" 
       , style
         [ ("width", px sideBarWidth)
-        , ("position", "absolute")
+        , ("position", "fixed")
         , ("top", px 10)
         , ("left", px 10)
         ]
@@ -997,13 +1050,11 @@ draw (w, h) s =
           ]
         ]
         [ Html.h2 [ class "mdl-card__title-text" ]
-          [ Html.text "Directions" ]
+          [ Html.text "Info" ]
         ]
       , div
         [ style [("padding", px 10)] ]
-        [ Html.p [] [Html.text "Use the up arrow key to go forward and the left and right arrow keys to turn."]
-        , Html.p [] [Html.text "Scroll to zoom, click and drag to pan."]
-        , Html.p [] [Html.text "Try out all the different geometries. Roughly speaking, a geometry is a notion of distance. Though they look curved, the paths you travel along are actually straight lines in each geometry (in the sense that they are the shortest paths between points)."]
+        [ Markdown.toHtml helpContent
         ]
       ]
 
@@ -1056,6 +1107,12 @@ draw (w, h) s =
             ])
             metricList
           ++
+          let
+            _ =
+              case s.metricIndex of
+                Right _ -> Native.Click.clickMomentarily "metric-custom" -- purity's overrated
+                _ -> ()
+          in
           [ Html.li
             [ style [("marginBottom", px 5)] ]
             [ Html.label
@@ -1064,12 +1121,11 @@ draw (w, h) s =
               , Html.Attributes.for "metric-custom"
               ]
               [ Html.input
-                ((case s.metricIndex of { Right _ -> [attribute "checked" ""]; _ -> [] }) ++
                 [ type' "radio"
                 , Html.Attributes.id "metric-custom"
                 , class "mdl-radio__button"
                 , Html.Attributes.name "metric"
-                ]) 
+                ]
                 []
               , Html.span [ class "mdl-radio__label" ]
                 [ Html.text "Custom" ]
@@ -1099,13 +1155,13 @@ draw (w, h) s =
       ]
 
     (mstr00,mstr01,mstr10,mstr11) =
-      Debug.log "downhere" s.metricStrings
+      s.metricStrings
 
     sideBar =
       Html.ul
       [ style
         [ ("width", px sideBarWidth) 
-        , ("position", "absolute")
+        , ("position", "fixed")
         , ("top", "10px")
         , ("right", "50px")
         , ("zIndex", "10")
@@ -1138,8 +1194,14 @@ draw (w, h) s =
   , sideBar
   , div
     [ onMouseDown mouseDownsInSpaceDivBox.address () 
+    {- TODO: Figure out wtf this isn't working
+    , onKeyUp keyEventsBox.address (\k -> (k, False))
+    , onKeyDown keyEventsBox.address (\k -> (k, True)) -}
     , on "wheel" ("deltaY" := Json.Decode.float) (\z ->
         Signal.message updateBox.address (Zoom z))
+    , on "focusout" (Json.Decode.succeed ()) (\_ ->
+        Debug.log "fuck your couch"
+          (Signal.message updateBox.address (Zoom 0)))
     ]
     [ Html.fromElement space ]
   ]
@@ -1182,14 +1244,14 @@ main =
       , trail = []
       , speed = 2 / 2000
       , turningSpeed = 30 * pi / Time.second
+      , keysActive = True
       }
 
     state =
       Signal.foldp update s0 updates
-
-    strs = Signal.map (Debug.log "strsz") <| Signal.dropRepeats <| Signal.map .metricStrings state
   in
   Signal.map2 draw
     Window.dimensions
     state
 
+port bodyFocused : Signal Bool

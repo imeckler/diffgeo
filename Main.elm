@@ -21,8 +21,34 @@ import Html exposing (div)
 import Html.Events exposing (onMouseDown, onClick, on)
 import Html.Attributes exposing (style, type', attribute, href, rel, src, class)
 import Slider exposing (slider)
-import ExpressionEntry exposing (expressionEntry)
+import Set
 
+parseTwoFormExpression str =
+  Expression.parse str `Result.andThen` \expr ->
+    if Set.toList (Expression.variables expr) == [coord1, coord2]
+    then Ok expr
+    else Err "Unknown variable"
+
+expressionEntry : String -> (String -> Signal.Message) -> Html.Html
+expressionEntry content f =
+  let
+    valueDecoder =
+      "target" := ("value" := Json.Decode.string)
+
+    color =
+      case parseTwoFormExpression content of
+        Ok _ ->
+          "white"
+        _ ->
+          "#DA7F7F"
+  in
+  Html.input
+  [ type' "text"
+  , style [("width", "108px"), ("backgroundColor", color)]
+  , Html.Attributes.value content
+  , on "input" valueDecoder f
+  ]
+  []
 -- we use the coordinates coord1 and coord2
 
 -- (a, b, c, d) is [[a, b], [c, d]]
@@ -106,9 +132,6 @@ christoffelSecond2 ((g11,g12,g21,g22) as g) =
   , gammaSecond122
   , sum [ Mul h21 gamma221, Mul h22 gamma222 ]
   )
-
-parseExn : String -> Expression
-parseExn s = case Expression.parse s of Ok e -> e
 
 sum (e::es) = List.foldl Add e es
 prod (e::es) = List.foldl Mul e es
@@ -279,22 +302,22 @@ currentNorm s =
 
 update : Update -> State -> State
 update u s =
-  case u of
+  case Debug.log "update" u of
     NoOp ->
       s
 
     EditMetric ij str ->
       let
         metricStrings' =
-          setAt ij str s.metricStrings
+          Debug.log "metricStrings" <| setAt ij str s.metricStrings
 
-        exprMays =
-          List.map Expression.parse
+        exprRess =
+          List.map parseTwoFormExpression
             (fourToList metricStrings')
       in
-      case sequenceResults exprMays of
+      case sequenceResults exprRess of
         Err err -> -- Just sit tight
-          s
+          {s | metricStrings <- metricStrings'}
 
         Ok m ->
           let metric' = fourFromList m
@@ -1076,7 +1099,7 @@ draw (w, h) s =
       ]
 
     (mstr00,mstr01,mstr10,mstr11) =
-      s.metricStrings
+      Debug.log "downhere" s.metricStrings
 
     sideBar =
       Html.ul
@@ -1163,6 +1186,8 @@ main =
 
     state =
       Signal.foldp update s0 updates
+
+    strs = Signal.map (Debug.log "strsz") <| Signal.dropRepeats <| Signal.map .metricStrings state
   in
   Signal.map2 draw
     Window.dimensions

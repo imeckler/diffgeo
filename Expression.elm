@@ -7,6 +7,7 @@ module Expression
   , derivative
   , optimize
   , toString
+  , variables
   ) where
 
 {-| A type for simple mathematical expressions.
@@ -25,6 +26,7 @@ module Expression
 -}
 
 import Dict
+import Set
 import Maybe
 import Native.ParseExpression
 
@@ -263,6 +265,24 @@ optimize expr =
 
         e1' ->
           Cos e1'
+
+variables : Expression -> Set.Set String
+variables =
+  let
+    go acc expr =
+      case expr of
+        Var x -> Set.insert x acc
+        Constant _ -> acc
+        Mul e1 e2 -> go (go acc e1) e2
+        Add e1 e2 -> go (go acc e1) e2
+        Exp _ e1 -> go acc e1
+        Pow e1 _ -> go acc e1
+        LogBase _ e1 -> go acc e1
+        Sin e1 -> go acc e1
+        Cos e1 -> go acc e1
+  in
+  go Set.empty
+
 
 {-
 envName : String

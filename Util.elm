@@ -80,3 +80,4 @@ maybeMap2 f ma mb =
         Just b -> Just (f a b)
         Nothing -> Nothing
     Nothing -> Nothing
+

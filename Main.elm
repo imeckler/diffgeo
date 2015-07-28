@@ -1022,19 +1022,19 @@ draw (w, h) s =
     helpCard =
       let
         helpContent = """
-Use the up arrow key to go forward and the left and right arrow keys to turn.
-
-Scroll to zoom, click and drag to pan.
-
-Try out all the different geometries and make your own using
-the text entries.
-
 Roughly speaking, a geometry
 is a [notion of distance][0].
 Though they look curved, the paths you travel
 along are actually straight lines in each geometry
 in the sense that they are the [shortest paths](https://en.wikipedia.org/wiki/Geodesic)
 between points.
+
+Use the up arrow key to go forward and the left and right arrow keys to turn.
+
+Scroll to zoom, click and drag to pan.
+
+Try out all the different geometries and make your own using
+the text entries.
 
 [0]: https://en.wikipedia.org/wiki/Metric_(mathematics)
         """

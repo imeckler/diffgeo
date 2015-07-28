@@ -348,7 +348,8 @@ update u s =
     EditMetric ij str ->
       let
         metricStrings' =
-          setAt ij str s.metricStrings
+          let (i,j) = ij in
+          setAt (j,i) str (setAt ij str s.metricStrings)
 
         exprRess =
           List.map parseTwoFormExpression

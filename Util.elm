@@ -11,18 +11,29 @@ import Maybe
     Just x -> x
     Nothing -> Debug.crash "!: Index not in array"
 
-sequenceMaybe : List (Maybe a) -> Maybe (List a)
-sequenceMaybe xs =
+sequenceMaybes : List (Maybe a) -> Maybe (List a)
+sequenceMaybes xs =
   case xs of
     Nothing :: _ ->
       Nothing
 
     Just x :: xs' ->
-      Maybe.map ((::) x) (sequenceMaybe xs')
+      Maybe.map ((::) x) (sequenceMaybes xs')
 
     [] ->
       Just []
 
+sequenceResults : List (Result err a) -> Result err (List a)
+sequenceResults xs =
+  case xs of
+    Err e :: _ ->
+      Err e
+
+    Ok x :: xs' ->
+      Result.map ((::) x) (sequenceResults xs')
+
+    [] ->
+      Ok []
 
 getExn : comparable -> Dict.Dict comparable v -> v
 getExn k d =

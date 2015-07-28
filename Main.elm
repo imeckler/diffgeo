@@ -21,7 +21,7 @@ import Html exposing (div)
 import Html.Events exposing (onMouseDown, onClick, on)
 import Html.Attributes exposing (style, type', attribute, href, rel, src, class)
 import Slider exposing (slider)
-import TextEntry exposing (textEntry)
+import ExpressionEntry exposing (expressionEntry)
 
 -- we use the coordinates coord1 and coord2
 
@@ -156,7 +156,6 @@ type alias State =
   { system        : ODE.System
   , metric        : TwoForm -- Can precompile if this is slow
   , metricStrings : (String, String, String, String)
-  , metricParsed  : Bool
   , overlay       : Float -> Form
   , metricIndex   : Either Int TwoForm
   , currGeodesic  : ODE.Solution
@@ -284,19 +283,20 @@ update u s =
     NoOp ->
       s
 
-    EditMetric ij s ->
+    EditMetric ij str ->
       let
         metricStrings' =
-          setAt ij s s.metricStrings'
+          setAt ij str s.metricStrings
 
         exprMays =
           List.map Expression.parse
             (fourToList metricStrings')
       in
-      case sequenceMaybe exprMays of
-        Nothing ->
-          { s | metricParsed <- False } -- Just sit tight
-        Just m ->
+      case sequenceResults exprMays of
+        Err err -> -- Just sit tight
+          s
+
+        Ok m ->
           let metric' = fourFromList m
               system = geodesicSystem metric'
               init = ODE.at s.currGeodesic s.geodesicPos
@@ -310,9 +310,8 @@ update u s =
           , system <- system
           , trailStart <- Maybe.map (\_ -> 0) s.trailStart
           , currGeodesic <- currGeodesic
-          , nextGeodesic <- ODE.solve 0 futureLength (ODE.at currGeodesic futureLength) 0.000001 1000
+          , nextGeodesic <- ODE.solve 0 futureLength (ODE.at currGeodesic futureLength) system 0.000001 1000
           , geodesicPos <- 0
-          , metricParsed <- True
           }
 
     SetMetric ig ->
@@ -340,7 +339,6 @@ update u s =
       | metric <- m.twoForm
       , metricStrings <- fourMap Expression.toString m.twoForm
       , metricIndex <- ig
-      , metricParsed <- True
       , overlay <- m.overlay
       , system <- system
       , trailStart <- Maybe.map (\_ -> 0) s.trailStart
@@ -1062,12 +1060,16 @@ draw (w, h) s =
             ]
           ]
           [ Html.tr []
-            [ Html.td [] [textEntry mstr00 (Signal.message updateBox.address << EditMetric (O,O))]
-            , Html.td [] [textEntry mstr01 (Signal.message updateBox.address << EditMetric (O,I))]
+            [ Html.td []
+              [expressionEntry mstr00 (Signal.message updateBox.address << EditMetric (O,O))]
+            , Html.td []
+              [expressionEntry mstr01 (Signal.message updateBox.address << EditMetric (O,I))]
             ]
           , Html.tr []
-            [ Html.td [] [textEntry mstr10 (Signal.message updateBox.address << EditMetric (I,O))]
-            , Html.td [] [textEntry mstr11 (Signal.message updateBox.address << EditMetric (I,I))]
+            [ Html.td []
+              [expressionEntry mstr10 (Signal.message updateBox.address << EditMetric (I,O))]
+            , Html.td []
+              [expressionEntry mstr11 (Signal.message updateBox.address << EditMetric (I,I))]
             ]
           ]
         ]
@@ -1128,6 +1130,8 @@ fourMap f (a1,a2,a3,a4) = (f a1, f a2, f a3, f a4)
 
 fourToList : (a, a, a, a) -> List a
 fourToList (a1,a2,a3,a4) = [a1, a2, a3, a4]
+
+fourFromList : List a -> (a,a,a,a)
 fourFromList [a1,a2,a3,a4] = (a1,a2,a3,a4)
 
 main =

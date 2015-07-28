@@ -1040,6 +1040,8 @@ Scroll to zoom, click and drag to pan.
 Try out all the different geometries and make your own using
 the text entries.
 
+You can read an extended explanation [here](http://parametricity.com/posts/2015-07-28-visualizing-geometries.html).
+
 [0]: https://en.wikipedia.org/wiki/Metric_(mathematics)
         """
       in

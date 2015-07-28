@@ -195,6 +195,7 @@ type alias State =
   , speed        : Float
   , turningSpeed : Float
   , keysActive   : Bool
+  , showInfo : Bool
   }
 
 -- Inputs
@@ -237,6 +238,7 @@ type Update
   | SetMetric (Either Int TwoForm)
   | EditMetric (Bit, Bit) String
   | KeysActive Bool
+  | ToggleInfo
   | NoOp
 
 updateBox : Signal.Mailbox Update
@@ -336,6 +338,9 @@ update u s =
   case u of
     NoOp ->
       s
+
+    ToggleInfo ->
+      {s | showInfo <- not s.showInfo}
 
     KeysActive b ->
       {s | keysActive <- b}
@@ -1038,25 +1043,34 @@ between points.
       , style
         [ ("width", px sideBarWidth)
         , ("position", "fixed")
+        , ("minHeight", px 0)
         , ("top", px 10)
         , ("left", px 10)
         ]
       ]
-      [ div
-        [ class "mdl-card__title" 
+      ( div
+        [ class "mdl-card__title mdl-button mdl-button--colored mdl-js-button mdl-js-ripple-effect" 
+        , Html.Attributes.id "help-card-title"
         , style
           [ ("backgroundColor","#46B6AC")
           , ("color", "white")
+          , ("height", px 52)
           ]
+        , onClick updateBox.address ToggleInfo
         ]
-        [ Html.h2 [ class "mdl-card__title-text" ]
+        [ Html.h2
+          [ class "mdl-card__title-text" ]
           [ Html.text "Info" ]
         ]
-      , div
-        [ style [("padding", px 10)] ]
-        [ Markdown.toHtml helpContent
+      ::
+      if s.showInfo
+      then
+        [ div
+          [ style [("padding", px 10)] ]
+          [ Markdown.toHtml helpContent
+          ]
         ]
-      ]
+      else [])
 
     customMetricEntry =
       Html.li
@@ -1245,6 +1259,7 @@ main =
       , speed = 2 / 2000
       , turningSpeed = 30 * pi / Time.second
       , keysActive = True
+      , showInfo = True
       }
 
     state =

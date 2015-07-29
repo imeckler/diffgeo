@@ -999,6 +999,16 @@ draw (w, h) s =
     sideBarWidth =
       300
 
+    signature =
+      div
+      [ style
+        [ ("position", "fixed")
+        , ("bottom", px 0)
+        , ("left", px 4)
+        ]
+      ]
+      [ Html.text "By Izzy Meckler" ]
+
     space =
       collage w h [drawSpace s]
 
@@ -1211,8 +1221,9 @@ You can read an extended explanation [here](http://parametricity.com/posts/2015-
   , Html.node "script"
     [ type' "text/javascript", src "https://storage.googleapis.com/code.getmdl.io/1.0.1/material.min.js" ]
     []
-  , helpCard
   , sideBar
+  , helpCard
+  , signature
   , div
     [ onMouseDown mouseDownsInSpaceDivBox.address () 
     {- TODO: Figure out wtf this isn't working

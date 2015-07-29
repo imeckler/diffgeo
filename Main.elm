@@ -51,16 +51,13 @@ expressionEntry content f =
   , on "input" valueDecoder f
   ]
   []
--- we use the coordinates coord1 and coord2
 
--- (a, b, c, d) is [[a, b], [c, d]]
+-- (a, b, c, d) is the matrix
+-- a b
+-- c d
 type alias TwoForm = (Expression, Expression, Expression, Expression)
 
-coord1 = "x"
-coord2 = "y"
-dcoord1 = "dx"
-dcoord2 = "dy"
-
+-- Begin geodesic equation stuff
 christoffelFirst1 (g11, g12, g21, g22) =
   let
     gamma121 =
@@ -135,10 +132,6 @@ christoffelSecond2 ((g11,g12,g21,g22) as g) =
   , sum [ Mul h21 gamma221, Mul h22 gamma222 ]
   )
 
-sum (e::es) = List.foldl Add e es
-prod (e::es) = List.foldl Mul e es
-
-
 geodesicSystem : TwoForm -> ODE.System
 geodesicSystem g =
   let
@@ -167,14 +160,7 @@ geodesicSystem g =
       ]
   in
   ODE.compile spec
-
-setAt : (Bit, Bit) -> a -> (a,a,a,a) -> (a,a,a,a)
-setAt (x,y) a (a1,a2,a3,a4) =
-  case (x, y) of
-    (O, O) -> (a, a2, a3, a4)
-    (O, I) -> (a1, a, a3, a4)
-    (I, O) -> (a1, a2, a, a4)
-    (I, I) -> (a1, a2, a3, a)
+-- End geodesic equation stuff
 
 -- My, this is getting crufty.
 type alias State =
@@ -185,6 +171,7 @@ type alias State =
   , metricIndex   : Either Int TwoForm
   , currGeodesic  : ODE.Solution
   , nextGeodesic  : ODE.Solution
+  -- Position (in length) along the current geodesic segment
   , geodesicPos   : Float
   , scaleFactor   : Float
   , pan           : (Float, Float)
@@ -194,8 +181,10 @@ type alias State =
   , trail        : List (List (Float, Float))
   , speed        : Float
   , turningSpeed : Float
+  -- Should the keyboard input be used to control the arrow?
   , keysActive   : Bool
-  , showInfo : Bool
+  -- Should the info box be displayed?
+  , showInfo     : Bool
   }
 
 -- Inputs
@@ -204,8 +193,6 @@ mouseDownsInSpaceDivBox = Signal.mailbox ()
 
 toggleLeaveTrailBox : Signal.Mailbox ()
 toggleLeaveTrailBox = Signal.mailbox ()
-
--- textBox : Signal.Mailbox 
 
 pans : Signal (Float, Float)
 pans =
@@ -223,8 +210,6 @@ pans =
     ((0, 0), (0, 0))
     Mouse.position
   |> Signal.keepWhen dragging (0, 0)
-
-type Bit = O | I
 
 type Update
   = Keys {delta : Float, keys : { x : Int, y : Int }}
@@ -244,32 +229,10 @@ type Update
 updateBox : Signal.Mailbox Update
 updateBox = Signal.mailbox NoOp
 
-keyEventsBox : Signal.Mailbox (KeyCode, Bool)
-keyEventsBox = Signal.mailbox (0, False)
-
-keysDown : Signal (Set.Set KeyCode)
-keysDown =
-  Signal.map (Debug.log "keysDown") <|
-  Signal.foldp (\(k,dir) s ->
-    if dir then Set.insert k s else Set.remove k s)
-    Set.empty
-    keyEventsBox.signal
-
 keys : Signal { delta : Float, keys : { x : Int, y : Int } }
 keys =
   let
     delta = Time.fps 30
-    {-
-    boolToInt b = if b then 1 else 0
-    arrows =
-      Signal.map (\pressed ->
-        let up = boolToInt (Set.member 38 pressed)
-            down = boolToInt (Set.member 40 pressed)
-            right = boolToInt (Set.member 39 pressed)
-            left = boolToInt (Set.member 37 pressed)
-        in
-        { x = right - left, y = up - down })
-        keysDown -}
   in
   Signal.sampleOn delta
     (Signal.map2 (\d k -> {delta=d, keys=k}) delta Keyboard.arrows)
@@ -282,8 +245,6 @@ updates =
   , updateBox.signal
   , Signal.map KeysActive bodyFocused
   ]
-
-futureLength = 1
 
 currentDet : State -> Float
 currentDet s =
@@ -305,11 +266,7 @@ normAt : TwoForm -> (Float, Float) -> (Float, Float) -> Float
 normAt metric (xPos, yPos) =
   let
     (g11, g12, g21, g22) = metric
-    -- I compute posAndVel just before in update. If it's slow I can cut reuse the computation.
     posEnv = Dict.fromList [(coord1, xPos), (coord2, yPos)]
-    {-
-    x = getExn posAndVel coord1
-    y = getExn posAndVel coord2 -}
     a11 = Expression.evaluateExn g11 posEnv
     a12 = Expression.evaluateExn g12 posEnv
     a21 = a12
@@ -323,9 +280,6 @@ currentNorm s =
     (g11, g12, g21, g22) = s.metric
     -- I compute posAndVel just before in update. If it's slow I can cut reuse the computation.
     posAndVel = ODE.at s.currGeodesic s.geodesicPos
-    {-
-    x = getExn posAndVel coord1
-    y = getExn posAndVel coord2 -}
     a11 = Expression.evaluateExn g11 posAndVel
     a12 = Expression.evaluateExn g12 posAndVel
     a21 = a12
@@ -461,10 +415,6 @@ update u s =
       in
       { s | trail <- [], trailStart <- trailStart' }
 
-shouldLeaveTrail : State -> Bool
-shouldLeaveTrail s =
-  case s.trailStart of { Just _ -> True; _ -> False }
-
 -- TODO change to pattern match on the record. Currently a syntax error (bug)
 updateKeys : {delta : Float, keys : {x:Int, y:Int}} -> State -> State
 updateKeys kd s =
@@ -537,8 +487,6 @@ updateKeys kd s =
     , trail <- trail'
     , trailStart <- Maybe.map (\_ -> 0) s.trailStart
     }
-
--- (x, y) -> (-y, x)
 
 curvedArrow : State -> Form
 curvedArrow s =
@@ -642,13 +590,6 @@ drawSpace s =
       (px, py) = s.pan
   in
   group
-  -- Would love to actually approximate circles by probing a fixed distance along geodesics.
-  -- Instead I sort of approximate it by trying to keep its area roughly correct
-  -- circle (s.scaleFactor / (3 * sqrt (currentDet s))) |> filled Color.black |> move (x, y)
-  {-
-  [ move (x,y) 
-      (filled Color.black
-        (trueCircle s.system s.scaleFactor (xReal, yReal) 0.3)) -}
   [ s.overlay s.scaleFactor
   , case s.trailStart of
       Just start ->
@@ -724,225 +665,6 @@ drawGeodesicFromTil scaleFactor start stop geodesic =
         ++ [ toPt (ODE.at geodesic stop) ]
   in
   traced (solid Color.green) (path pts)
-
-closedCircle r =
-  circle r ++ [(r, 0)]
-
-cylinderOverlay scaleFactor =
-  let nRays = 8 in
-  group
-  [ group
-    (List.map (\i -> traced (dashed Color.black) (closedCircle (i * scaleFactor)))
-      [1..10])
-  , group
-    (List.map (\i ->
-      let t = i * 2 * pi / nRays in
-      traced (dashed Color.black)
-        (segment (0,0) (10 * scaleFactor * cos t, 10 * scaleFactor * sin t)))
-      [1..nRays])
-  ]
-
-metricList =
-  [ { name = "Upper half plane"
-    , twoForm = halfPlane
-    , init = Dict.fromList [(coord1, 0), (coord2, 2), (dcoord1, 1), (dcoord2, 0)]
-    , overlay = \scaleFactor ->
-        traced (dashed Color.black) (segment (-1000 * scaleFactor, 0) (1000 * scaleFactor, 0))
-    , scaleFactor = defaultScaleFactor / 2
-    , pan = (0, defaultScaleFactor)
-    }
-  , { name = "Poincare disk"
-    , twoForm = poincare
-    , init = Dict.fromList [(coord1, 0.5), (coord2, 0), (dcoord1, 0), (dcoord2, 1)]
-    , overlay = \scaleFactor ->
-        traced (dashed Color.black) (closedCircle scaleFactor)
-    , scaleFactor = 2 * defaultScaleFactor
-    , pan = defaultPan
-    }
-  , { name = "Strip sphere"
-    , twoForm = sphere
-    , init = Dict.fromList [(coord1, pi), (coord2, pi/2), (dcoord1, -0.04), (dcoord2, 1)]
-    , overlay = \scaleFactor ->
-        let x1 = 2 * pi * scaleFactor in let y1 = pi * scaleFactor in
-        traced (dashed Color.black)
-          (path [(0, 0), (x1, 0), (x1, y1), (0, y1), (0, 0)])
-    , scaleFactor = defaultScaleFactor
-    , pan = (-pi*defaultScaleFactor, pi*defaultScaleFactor/2)
-    }
-  , { name = "Stereographic sphere"
-    , twoForm = stereoGraphicSphere
-    , init = Dict.fromList [(coord1, 1.1085813794088752), (coord2, 0.43416503851501376), (dcoord1, 1.0618525452786418), (dcoord2, 0.3927089533282449)]
-    , overlay = cylinderOverlay
-    , scaleFactor = 66.27618564857013
-    , pan = defaultPan
-    }
-  , { name = "Cylinder"
-    , twoForm = cylinder
-    , init = Dict.fromList [(coord1, 0.5), (coord2, 0), (dcoord1, 0), (dcoord2, 1)]
-    , scaleFactor = defaultScaleFactor
-    , pan = defaultPan
-    , overlay = cylinderOverlay
-    }
-  , { name = "Flat"
-    , twoForm = flat
-    , init = Dict.fromList [(coord1, 0), (coord2, 1), (dcoord1, 1), (dcoord2, 0)]
-    , overlay = \_ -> group []
-    , scaleFactor = defaultScaleFactor
-    , pan = defaultPan
-    }
-  {-
-  , { name = "Curvy"
-    , twoForm = curvy
-    , init = Dict.fromList [(coord1, 0.5), (coord2, 1), (dcoord1, 0), (dcoord2, 1)]
-    , overlay = \_ -> group []
-    , scaleFactor = defaultScaleFactor
-    , pan = defaultPan
-    }
-  -}
-  ]
-  |> List.map (\m ->
-    let ((dx, dy) as v) = (getExn dcoord1 m.init, getExn dcoord2 m.init)
-        pos = (getExn coord1 m.init, getExn coord2 m.init)
-        norm = normAt m.twoForm pos v
-        init' = Dict.insert dcoord1 (dx / norm) (Dict.insert dcoord2 (dy / norm) m.init)
-    in
-    { m | init <- init' })
-
--- Assumes a quadratic form as argument
-{-
-asMetric : Expression -> Maybe TwoForm
-asMetric expr =
-  case expr of
-    Mul (Var "dx") y ->
--}
-metricArray = Array.fromList metricList
-
-sphere =
-  ( Pow (Sin (Var coord2)) 2
-  , Constant 0
-  , Constant 0
-  , Constant 1
-  )
-
-stereoGraphicSphere =
-  let
-    x = Var coord1
-    y = Var coord2
-    r2 = Add (Mul x x) (Mul y y)
-    c = Mul (Constant 4) (Pow (Add (Constant 1) r2) -2)
-  in
-  ( c, Constant 0, Constant 0, c )
-
-flat = (Constant 1, Constant 0, Constant 0 , Constant 1)
-
-poincare =
-  let
-    c =
-      Pow
-        (sum
-        [ Constant 1
-        , Mul (Constant -1)
-            (Add (Mul (Var coord1) (Var coord1)) (Mul (Var coord2) (Var coord2)))
-        ])
-        -2
-  in
-  (c, Constant 0, Constant 0, c)
-
-klein =
-  let
-    (x, y) = (Var coord1, Var coord2)
-    c =
-      sum
-      [ Constant 1
-      , Mul (Constant -1) 
-        (Add (Mul x x) (Mul y y))
-      ]
-  in
-  ( Add (Pow c -1) (Mul (Mul x x) (Pow c -2))
-  , Mul (Mul x y) (Pow c -2)
-  , Mul (Mul x y) (Pow c -2)
-  , Pow c -1
-  )
-
-halfPlane =
-  let c = Pow (Var coord2) -2 in
-  (c, Constant 0, Constant 0, c)
-
--- seems like everything gets you something similar
-noparabola =
-  let
-    c =
-      Pow
-      (Add (Var coord2) (Mul (Constant -1) (Mul (Var coord1) (Var coord1))))
-      -1
-  in
-  (c, Constant 0, Constant 0, c)
-
--- this is a nice one
-curvy =
-  let
-    c =
-      Pow
-      (Add (Mul (Var coord2) (Var coord2)) (Mul (Var coord1) (Var coord1)))
-      2
-  in
-  (c, Constant 0, Constant 0, c)
-
-cylinder =
-  let
-    x = Var coord1
-    y = Var coord2
-    c = Pow (Add (Mul x x) (Mul y y)) -1
-  in
-  ( c, Constant 0
-  , Constant 0, c )
-
-{-
--- p(x,y) = let r = sqrt (x^2 + y^2) in (x / r, y / r, log r)
--- Correct but slow since the generated expression is huge.
-cylinder =
-  let 
-    x = Var coord1
-    y = Var coord2
-    r = Pow (Add (Mul x x) (Mul y y)) 0.5
-    p = [ Mul x (Pow r -1), Mul y (Pow r -1), LogBase e r ]
-    dot l1 l2 = sum (List.map2 Mul l1 l2)
-  in
-  ( dot (List.map (derivative coord1) p) (List.map (derivative coord1) p)
-  , dot (List.map (derivative coord1) p) (List.map (derivative coord2) p)
-  , dot (List.map (derivative coord2) p) (List.map (derivative coord1) p)
-  , dot (List.map (derivative coord2) p) (List.map (derivative coord2) p)
-  )
--}
-
-px x = toString x ++ "px"
-
-trueCircle : ODE.System -> Float -> (Float, Float) -> Float -> List (Float, Float)
-trueCircle system scaleFactor (x, y) r =
-  let n = 100
-      dt = 2 * pi / n
-      env0 = Dict.fromList [(coord1, x), (coord2, y), (dcoord1, 0), (dcoord2, 0)]
-      go acc i =
-        if i == n
-        then polygon acc
-        else
-          let
-            theta = (2*pi*i)/n
-            vx = cos theta -- do I have to normalise...?
-            vy = sin theta
-            sol =
-              ODE.solve 0 r
-                (Dict.insert dcoord1 vx (Dict.insert dcoord2 vy env0))
-                system
-                0.000001
-                1000
-            solAtR = ODE.at sol r
-          in
-          go
-            ((scaleFactor * getExn coord1 solAtR, scaleFactor * getExn coord2 solAtR) :: acc)
-            (i + 1)
-  in
-  go [] 0
 
 draw : (Int, Int) -> State -> Element
 draw (w, h) s =
@@ -1288,3 +1010,216 @@ main =
     state
 
 port bodyFocused : Signal Bool
+
+-- UTILS
+
+type Bit = O | I
+
+sum (e::es) = List.foldl Add e es
+prod (e::es) = List.foldl Mul e es
+
+setAt : (Bit, Bit) -> a -> (a,a,a,a) -> (a,a,a,a)
+setAt (x,y) a (a1,a2,a3,a4) =
+  case (x, y) of
+    (O, O) -> (a, a2, a3, a4)
+    (O, I) -> (a1, a, a3, a4)
+    (I, O) -> (a1, a2, a, a4)
+    (I, I) -> (a1, a2, a3, a)
+
+shouldLeaveTrail : State -> Bool
+shouldLeaveTrail s =
+  case s.trailStart of { Just _ -> True; _ -> False }
+
+px x = toString x ++ "px"
+
+closedCircle r =
+  circle r ++ [(r, 0)]
+
+-- CONFIG
+futureLength = 1
+
+coord1 = "x"
+coord2 = "y"
+dcoord1 = "dx"
+dcoord2 = "dy"
+
+metricArray = Array.fromList metricList
+
+metricList =
+  [ { name = "Upper half plane"
+    , twoForm = halfPlane
+    , init = Dict.fromList [(coord1, 0), (coord2, 2), (dcoord1, 1), (dcoord2, 0)]
+    , overlay = \scaleFactor ->
+        traced (dashed Color.black) (segment (-1000 * scaleFactor, 0) (1000 * scaleFactor, 0))
+    , scaleFactor = defaultScaleFactor / 2
+    , pan = (0, defaultScaleFactor)
+    }
+  , { name = "Poincare disk"
+    , twoForm = poincare
+    , init = Dict.fromList [(coord1, 0.5), (coord2, 0), (dcoord1, 0), (dcoord2, 1)]
+    , overlay = \scaleFactor ->
+        traced (dashed Color.black) (closedCircle scaleFactor)
+    , scaleFactor = 2 * defaultScaleFactor
+    , pan = defaultPan
+    }
+  , { name = "Strip sphere"
+    , twoForm = sphere
+    , init = Dict.fromList [(coord1, pi), (coord2, pi/2), (dcoord1, -0.04), (dcoord2, 1)]
+    , overlay = \scaleFactor ->
+        let x1 = 2 * pi * scaleFactor in let y1 = pi * scaleFactor in
+        traced (dashed Color.black)
+          (path [(0, 0), (x1, 0), (x1, y1), (0, y1), (0, 0)])
+    , scaleFactor = defaultScaleFactor
+    , pan = (-pi*defaultScaleFactor, pi*defaultScaleFactor/2)
+    }
+  , { name = "Stereographic sphere"
+    , twoForm = stereoGraphicSphere
+    , init = Dict.fromList [(coord1, 1.1085813794088752), (coord2, 0.43416503851501376), (dcoord1, 1.0618525452786418), (dcoord2, 0.3927089533282449)]
+    , overlay = cylinderOverlay
+    , scaleFactor = 66.27618564857013
+    , pan = defaultPan
+    }
+  , { name = "Cylinder"
+    , twoForm = cylinder
+    , init = Dict.fromList [(coord1, 0.5), (coord2, 0), (dcoord1, 0), (dcoord2, 1)]
+    , scaleFactor = defaultScaleFactor
+    , pan = defaultPan
+    , overlay = cylinderOverlay
+    }
+  , { name = "Flat"
+    , twoForm = flat
+    , init = Dict.fromList [(coord1, 0), (coord2, 1), (dcoord1, 1), (dcoord2, 0)]
+    , overlay = \_ -> group []
+    , scaleFactor = defaultScaleFactor
+    , pan = defaultPan
+    }
+  {-
+  , { name = "Curvy"
+    , twoForm = curvy
+    , init = Dict.fromList [(coord1, 0.5), (coord2, 1), (dcoord1, 0), (dcoord2, 1)]
+    , overlay = \_ -> group []
+    , scaleFactor = defaultScaleFactor
+    , pan = defaultPan
+    }
+  -}
+  ]
+  |> List.map (\m ->
+    let ((dx, dy) as v) = (getExn dcoord1 m.init, getExn dcoord2 m.init)
+        pos = (getExn coord1 m.init, getExn coord2 m.init)
+        norm = normAt m.twoForm pos v
+        init' = Dict.insert dcoord1 (dx / norm) (Dict.insert dcoord2 (dy / norm) m.init)
+    in
+    { m | init <- init' })
+
+cylinderOverlay scaleFactor =
+  let nRays = 8 in
+  group
+  [ group
+    (List.map (\i -> traced (dashed Color.black) (closedCircle (i * scaleFactor)))
+      [1..10])
+  , group
+    (List.map (\i ->
+      let t = i * 2 * pi / nRays in
+      traced (dashed Color.black)
+        (segment (0,0) (10 * scaleFactor * cos t, 10 * scaleFactor * sin t)))
+      [1..nRays])
+  ]
+
+
+sphere =
+  ( Pow (Sin (Var coord2)) 2
+  , Constant 0
+  , Constant 0
+  , Constant 1
+  )
+
+stereoGraphicSphere =
+  let
+    x = Var coord1
+    y = Var coord2
+    r2 = Add (Mul x x) (Mul y y)
+    c = Mul (Constant 4) (Pow (Add (Constant 1) r2) -2)
+  in
+  ( c, Constant 0, Constant 0, c )
+
+flat = (Constant 1, Constant 0, Constant 0 , Constant 1)
+
+poincare =
+  let
+    c =
+      Pow
+        (sum
+        [ Constant 1
+        , Mul (Constant -1)
+            (Add (Mul (Var coord1) (Var coord1)) (Mul (Var coord2) (Var coord2)))
+        ])
+        -2
+  in
+  (c, Constant 0, Constant 0, c)
+
+klein =
+  let
+    (x, y) = (Var coord1, Var coord2)
+    c =
+      sum
+      [ Constant 1
+      , Mul (Constant -1) 
+        (Add (Mul x x) (Mul y y))
+      ]
+  in
+  ( Add (Pow c -1) (Mul (Mul x x) (Pow c -2))
+  , Mul (Mul x y) (Pow c -2)
+  , Mul (Mul x y) (Pow c -2)
+  , Pow c -1
+  )
+
+halfPlane =
+  let c = Pow (Var coord2) -2 in
+  (c, Constant 0, Constant 0, c)
+
+-- seems like everything gets you something similar
+noparabola =
+  let
+    c =
+      Pow
+      (Add (Var coord2) (Mul (Constant -1) (Mul (Var coord1) (Var coord1))))
+      -1
+  in
+  (c, Constant 0, Constant 0, c)
+
+-- this is a nice one
+curvy =
+  let
+    c =
+      Pow
+      (Add (Mul (Var coord2) (Var coord2)) (Mul (Var coord1) (Var coord1)))
+      2
+  in
+  (c, Constant 0, Constant 0, c)
+
+cylinder =
+  let
+    x = Var coord1
+    y = Var coord2
+    c = Pow (Add (Mul x x) (Mul y y)) -1
+  in
+  ( c, Constant 0
+  , Constant 0, c )
+
+{-
+-- p(x,y) = let r = sqrt (x^2 + y^2) in (x / r, y / r, log r)
+-- Correct but slow since the generated expression is huge.
+cylinder =
+  let 
+    x = Var coord1
+    y = Var coord2
+    r = Pow (Add (Mul x x) (Mul y y)) 0.5
+    p = [ Mul x (Pow r -1), Mul y (Pow r -1), LogBase e r ]
+    dot l1 l2 = sum (List.map2 Mul l1 l2)
+  in
+  ( dot (List.map (derivative coord1) p) (List.map (derivative coord1) p)
+  , dot (List.map (derivative coord1) p) (List.map (derivative coord2) p)
+  , dot (List.map (derivative coord2) p) (List.map (derivative coord1) p)
+  , dot (List.map (derivative coord2) p) (List.map (derivative coord2) p)
+  )
+-}

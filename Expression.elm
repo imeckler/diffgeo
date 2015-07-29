@@ -65,9 +65,9 @@ toString =
     Mul e1 e2 ->
       parenthesize (toString e1 ++ " * " ++ toString e2)
     Exp b e1 ->
-      (if b < 0 then parenthesize else identity) (Basics.toString b) ++ "^" ++ toString e1
+      parenthesize ((if b < 0 then parenthesize else identity) (Basics.toString b) ++ "^" ++ toString e1)
     Pow e1 p ->
-      toString e1 ++ "^" ++ Basics.toString p
+      parenthesize (toString e1 ++ "^" ++ Basics.toString p)
     LogBase b e1 ->
       if b == e
       then "log(" ++ toString e1 ++ ")"

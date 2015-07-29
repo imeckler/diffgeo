@@ -1062,6 +1062,14 @@ metricList =
     , scaleFactor = 2 * defaultScaleFactor
     , pan = defaultPan
     }
+  , { name = "Klein disk"
+    , twoForm = klein
+    , init = Dict.fromList [(coord1, 0.5), (coord2, 0), (dcoord1, 0), (dcoord2, 1)]
+    , overlay = \scaleFactor ->
+        traced (dashed Color.black) (closedCircle scaleFactor)
+    , scaleFactor = 2 * defaultScaleFactor
+    , pan = defaultPan
+    }
   , { name = "Strip sphere"
     , twoForm = sphere
     , init = Dict.fromList [(coord1, pi), (coord2, pi/2), (dcoord1, -0.04), (dcoord2, 1)]
@@ -1170,7 +1178,7 @@ klein =
   ( Add (Pow c -1) (Mul (Mul x x) (Pow c -2))
   , Mul (Mul x y) (Pow c -2)
   , Mul (Mul x y) (Pow c -2)
-  , Pow c -1
+  , Add (Pow c -1) (Mul (Mul y y) (Pow c -2))
   )
 
 halfPlane =
